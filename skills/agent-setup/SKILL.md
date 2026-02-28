@@ -105,14 +105,23 @@ LOCK_DIR="$PARENT_ROOT/.pi/parallel-agents"
 LOCK_FILE="$LOCK_DIR/merge.lock"
 mkdir -p "$LOCK_DIR"
 
+MERGE_LOCK_TIMEOUT=120
+
 acquire_lock() {
-  local payload
+  local payload started elapsed
   payload="{\"agentId\":\"$AGENT_ID\",\"pid\":$$,\"acquiredAt\":\"$(date -Is)\"}"
+  started=$(date +%s)
   while true; do
     if ( set -o noclobber; printf '%s\n' "$payload" > "$LOCK_FILE" ) 2>/dev/null; then
       return 0
     fi
-    echo "[parallel-agent-finish] Waiting for merge lock..."
+    elapsed=$(( $(date +%s) - started ))
+    if [[ "$elapsed" -ge "$MERGE_LOCK_TIMEOUT" ]]; then
+      echo "[parallel-agent-finish] Timed out after ${MERGE_LOCK_TIMEOUT}s waiting for merge lock."
+      echo "[parallel-agent-finish] Stale lock? Inspect: $LOCK_FILE"
+      exit 3
+    fi
+    echo "[parallel-agent-finish] Waiting for merge lock... (${elapsed}s / ${MERGE_LOCK_TIMEOUT}s)"
     sleep 1
   done
 }
@@ -146,6 +155,7 @@ while true; do
 
   if [[ "$merge_status" -eq 0 ]]; then
     echo "[parallel-agent-finish] Success: merged $BRANCH -> $MAIN_BRANCH in parent checkout."
+    rm -f "$(pwd)/.pi/active.lock" || true
     exit 0
   fi
 

@@ -1199,6 +1199,7 @@ function ensureStatusPoller(ctx: ExtensionContext): void {
 					statusPollInFlight = false;
 				});
 		}, 2500);
+		statusPollTimer.unref();
 	}
 
 	void renderStatusLine(ctx).catch(() => {});
