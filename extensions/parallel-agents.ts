@@ -443,6 +443,12 @@ async function updateWorktreeLock(worktreePath: string, patch: Record<string, un
 	await writeWorktreeLock(worktreePath, { ...current, ...patch });
 }
 
+async function cleanupWorktreeLockBestEffort(worktreePath?: string): Promise<void> {
+	if (!worktreePath) return;
+	const lockPath = join(worktreePath, ".pi", "active.lock");
+	await fs.unlink(lockPath).catch(() => {});
+}
+
 function listRegisteredWorktrees(repoRoot: string): Set<string> {
 	const result = runOrThrow("git", ["-C", repoRoot, "worktree", "list", "--porcelain"]);
 	const set = new Set<string>();
@@ -845,6 +851,7 @@ async function refreshOneAgentRuntime(record: AgentRecord): Promise<void> {
 			record.finishedAt = exit.finishedAt ?? record.finishedAt ?? nowIso();
 			record.status = exit.exitCode === 0 ? "done" : "failed";
 			record.updatedAt = nowIso();
+			await cleanupWorktreeLockBestEffort(record.worktreePath);
 			return;
 		}
 	}
@@ -869,6 +876,7 @@ async function refreshOneAgentRuntime(record: AgentRecord): Promise<void> {
 		if (!record.error) {
 			record.error = "tmux window disappeared before an exit marker was recorded";
 		}
+		await cleanupWorktreeLockBestEffort(record.worktreePath);
 	}
 }
 

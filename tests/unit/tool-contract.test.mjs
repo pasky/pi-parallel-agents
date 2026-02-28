@@ -15,7 +15,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -146,6 +146,17 @@ async function waitForAnyFirstPass(stateRoot, ids) {
 	return { ok: false, error: "no target-state agent found (poll required)" };
 }
 
+/**
+ * Best-effort re-implementation of worktree lock cleanup.
+ *
+ * @param {string | undefined} worktreePath
+ */
+async function cleanupWorktreeLockBestEffort(worktreePath) {
+	if (!worktreePath) return;
+	const lockPath = join(worktreePath, ".pi", "active.lock");
+	await rm(lockPath, { force: true }).catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Helper: temporary registry factory
 // ---------------------------------------------------------------------------
@@ -227,6 +238,36 @@ test("summarizeTask — collapses whitespace and truncates", () => {
 	assert.ok(!summary.includes("\n"), "summary should be single-line");
 	assert.ok(summary.length <= 120, `summary too long: ${summary.length}`);
 	assert.ok(summary.endsWith("…"), "summary should be truncated with ellipsis");
+});
+
+test("cleanupWorktreeLockBestEffort — removes existing lock and remains idempotent", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-parallel-lock-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+
+	const worktreePath = join(dir, "wt-0001");
+	const lockPath = join(worktreePath, ".pi", "active.lock");
+	await mkdir(join(worktreePath, ".pi"), { recursive: true });
+	await writeFile(lockPath, JSON.stringify({ agentId: "a-0001" }) + "\n", "utf8");
+
+	await cleanupWorktreeLockBestEffort(worktreePath);
+
+	let exists = true;
+	try {
+		await readFile(lockPath, "utf8");
+	} catch {
+		exists = false;
+	}
+	assert.equal(exists, false, "lock file should be removed");
+
+	await assert.doesNotReject(() => cleanupWorktreeLockBestEffort(worktreePath));
+});
+
+test("cleanupWorktreeLockBestEffort — missing path and missing lock never throw", async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-parallel-lock-"));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+
+	await assert.doesNotReject(() => cleanupWorktreeLockBestEffort(undefined));
+	await assert.doesNotReject(() => cleanupWorktreeLockBestEffort(join(dir, "wt-no-lock")));
 });
 
 // ---------------------------------------------------------------------------
