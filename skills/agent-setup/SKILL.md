@@ -41,7 +41,9 @@ Create the three files below. For each file, check whether it already exists bef
 
 Write this file and make it executable (`chmod +x`).
 
-**Default content** — adjust the bootstrap section based on user's answer to question 2:
+Use `MAIN_BRANCH` set to whatever the user specified in question 1 (or `main` by default). The start script must enforce branch/head sync **before** bootstrap.
+
+**Default content** — substitute `MAIN_BRANCH_VALUE` with the actual branch name, then append bootstrap steps based on question 2:
 
 ```bash
 #!/usr/bin/env bash
@@ -50,9 +52,50 @@ set -euo pipefail
 PARENT_ROOT="${1:-}"
 WORKTREE="${2:-$(pwd)}"
 AGENT_ID="${3:-unknown}"
+MAIN_BRANCH="MAIN_BRANCH_VALUE"
 
 BRANCH="$(git -C "$WORKTREE" branch --show-current 2>/dev/null || true)"
-echo "[parallel-agent-start] agent=$AGENT_ID branch=${BRANCH:-?}"
+if [[ -z "$BRANCH" ]]; then
+  echo "[parallel-agent-start] Could not determine current branch in $WORKTREE."
+  exit 1
+fi
+
+echo "[parallel-agent-start] agent=$AGENT_ID branch=$BRANCH main=$MAIN_BRANCH"
+
+REMOTE_MAIN_REF="refs/remotes/origin/$MAIN_BRANCH"
+LOCAL_MAIN_REF="refs/heads/$MAIN_BRANCH"
+
+if git -C "$WORKTREE" remote get-url origin >/dev/null 2>&1; then
+  echo "[parallel-agent-start] Fetching origin/$MAIN_BRANCH..."
+  git -C "$WORKTREE" fetch --prune origin "$MAIN_BRANCH" >/dev/null 2>&1 || \
+    echo "[parallel-agent-start] origin/$MAIN_BRANCH not fetched (missing branch or fetch failure)."
+else
+  echo "[parallel-agent-start] No origin remote configured; checking local refs only."
+fi
+
+if git -C "$WORKTREE" show-ref --verify --quiet "$REMOTE_MAIN_REF"; then
+  echo "[parallel-agent-start] Syncing local $MAIN_BRANCH to origin/$MAIN_BRANCH."
+  if git -C "$WORKTREE" show-ref --verify --quiet "$LOCAL_MAIN_REF"; then
+    git -C "$WORKTREE" branch -f "$MAIN_BRANCH" "origin/$MAIN_BRANCH" >/dev/null
+  else
+    git -C "$WORKTREE" branch "$MAIN_BRANCH" "origin/$MAIN_BRANCH" >/dev/null
+  fi
+elif git -C "$WORKTREE" show-ref --verify --quiet "$LOCAL_MAIN_REF"; then
+  echo "[parallel-agent-start] origin/$MAIN_BRANCH missing; using local $MAIN_BRANCH as fallback."
+else
+  echo "[parallel-agent-start] ERROR: missing both origin/$MAIN_BRANCH and local $MAIN_BRANCH."
+  echo "[parallel-agent-start] Create/fetch $MAIN_BRANCH and rerun."
+  exit 1
+fi
+
+if [[ "$BRANCH" == "$MAIN_BRANCH" ]]; then
+  echo "[parallel-agent-start] ERROR: child worktree is on $MAIN_BRANCH; expected a dedicated agent branch."
+  exit 1
+fi
+
+echo "[parallel-agent-start] Resetting $BRANCH to $MAIN_BRANCH."
+git -C "$WORKTREE" checkout "$BRANCH" >/dev/null 2>&1
+git -C "$WORKTREE" reset --hard "$MAIN_BRANCH" >/dev/null
 ```
 
 - If the user wants **no custom bootstrap**: append the optional hook block:
