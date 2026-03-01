@@ -1,11 +1,15 @@
 ---
 name: agent-setup
-description: Interactive setup for pi-parallel-agents. Chats with you about merge policy, main branch name, and bootstrap needs, then creates or updates .pi/parallel-agent-start.sh, .pi/parallel-agent-finish.sh, and .pi/parallel-agent-skills/finish/SKILL.md tailored to your answers. Run via /skill:agent-setup.
+description: Initialize or update setup for pi-parallel-agents (running asynchronous agents spawned/controlled from main session)
 ---
 
 # Parallel Agent Setup
 
-Set up the pi-parallel-agents lifecycle scripts for this project. Work through two phases: interview, then file creation.
+Set up the pi-parallel-agents lifecycle scripts for this project.
+
+Initial first time setup (no .pi/parallel-agent* yet): Work through two phases: interview, then file creation.
+
+Update setup: Chat with the user about what needs changing, use file examples below as reference for comparison.
 
 ## Phase 1: Interview
 
@@ -20,6 +24,8 @@ Ask the user the following questions. You may ask them all at once or one at a t
    - **Open a pull request** instead?
 
 4. **Overwrite existing files** – If `.pi/parallel-agent-start.sh` or similar already exist, overwrite them? *(default: no — skip existing files)*
+
+Before asking the questions, autonomously try to answer questions 1, 2 and 4, and propose project-specific answers to the user.
 
 Collect all answers before proceeding to Phase 2.
 
@@ -241,7 +247,7 @@ This is a skill for the **child agent** (not this session) that tells it how to 
 ```markdown
 ---
 name: finish
-description: Finalize a parallel-agent branch after explicit user approval (e.g. LGTM). Confirm the finish action with user first; default path is local merge via .pi/parallel-agent-finish.sh.
+description: Merge the branch with current work to upstream after explicit user sign-off (e.g. "LGTM")
 ---
 
 # Parallel-agent finish workflow
@@ -249,8 +255,6 @@ description: Finalize a parallel-agent branch after explicit user approval (e.g.
 When the user explicitly approves the work (e.g. says "LGTM", "ship it", "merge it"):
 
 1. **Confirm** the finish action with the user before doing anything.
-   - Default: local merge via `.pi/parallel-agent-finish.sh`
-   - Alternative (if user requests): push branch and open a PR instead
 
 2. Run the finish script:
 
@@ -265,6 +269,7 @@ PI_PARALLEL_PARENT_REPO="$PI_PARALLEL_PARENT_REPO" .pi/parallel-agent-finish.sh
 
 4. If the parent-side merge fails because MAIN_BRANCH_VALUE moved ahead:
    - The finish script retries the reconcile loop automatically
+   - Parent-side merge is a bit sensitive operation as it can make big mess; solve simple issues yourself, but escalate to the user with major issues (such as dirty parent worktree)
 
 5. After success: report the merged commit(s). Suggest `/quit` if no further work is needed.
 ```
@@ -274,7 +279,7 @@ PI_PARALLEL_PARENT_REPO="$PI_PARALLEL_PARENT_REPO" .pi/parallel-agent-finish.sh
 ```markdown
 ---
 name: finish
-description: Finalize a parallel-agent branch by pushing and opening a PR via gh CLI, after explicit user approval (e.g. LGTM).
+description: Open a PR for the branch with current work to upstream after explicit user sign-off (e.g. "LGTM")
 ---
 
 # Parallel-agent finish workflow
@@ -299,6 +304,5 @@ When the user explicitly approves the work (e.g. says "LGTM", "ship it"):
 Tell the user which files were created, updated, or skipped, and how to proceed:
 
 - Start an agent: `/agent <task description>`
-- Watch status: statusline shows active agents; `/agents` lists all
-- Check a specific agent: use the `agent-check` tool
-- Send follow-up: use the `agent-send` tool
+- Watch status: statusline shows active agents, ...@<number> is the tmux window to switch to; `/agents` lists all
+- Ask you to set up and manage a flock of multiple parallel agents on your own to solve a task (you have the tools)
