@@ -8,8 +8,12 @@ description: Initialize or update setup for pi-parallel-agents (running asynchro
 Set up the pi-parallel-agents lifecycle scripts for this project.
 
 Initial first time setup (no .pi/parallel-agent* yet): Work through two phases: interview, then file creation.
+Finish by backing up this agent-setup SKILL.md to .pi/parallel-agents/agent-start~/ for easy future upgrades.
 
 Update setup: Chat with the user about what needs changing, use file examples below as reference for comparison.
+
+Upgrade setup to new pi-parallel-agents version: Diff this file with the current backup .pi/parallel-agents/agent-start~/
+and discuss the changes to apply (or not) with the user. When upgrade is finished, update the backup to the current version.
 
 ## Phase 1: Interview
 
@@ -301,8 +305,9 @@ When the user explicitly approves the work (e.g. says "LGTM", "ship it"):
 
 ## Phase 3: Report
 
-Tell the user which files were created, updated, or skipped, and how to proceed:
+Tell the user which files were created, updated, or skipped, including backup/reference files, and how to proceed:
 
+- Backup reference for future diffs
 - Start an agent: `/agent <task description>`
 - Watch status: statusline shows active agents, ...@<number> is the tmux window to switch to; `/agents` lists all
 - Ask you to set up and manage a flock of multiple parallel agents on your own to solve a task (you have the tools)
