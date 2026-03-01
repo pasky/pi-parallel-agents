@@ -233,6 +233,30 @@ function statusShort(status: AgentStatus): string {
 	}
 }
 
+function statusColorRole(status: AgentStatus): "warning" | "muted" | "accent" | "error" {
+	switch (status) {
+		// Rare/transient states: highlight so they stand out.
+		case "allocating_worktree":
+		case "spawning_tmux":
+		case "starting":
+		case "waiting_merge_lock":
+		case "retrying_reconcile":
+			return "warning";
+		// Normal working states: keep low visual weight.
+		case "running":
+		case "finishing":
+		case "done":
+			return "muted";
+		// Needs user attention.
+		case "waiting_user":
+			return "accent";
+		// Terminal failure.
+		case "failed":
+		case "crashed":
+			return "error";
+	}
+}
+
 function stripTerminalNoise(text: string): string {
 	return text.replace(ANSI_CSI_RE, "").replace(ANSI_OSC_RE, "").replace(/\r/g, "").replace(CONTROL_RE, "");
 }
@@ -1714,10 +1738,12 @@ async function renderStatusLine(ctx: ExtensionContext): Promise<void> {
 		return;
 	}
 
+	const theme = ctx.ui.theme;
 	const line = agents
 		.map((record) => {
 			const win = record.tmuxWindowIndex !== undefined ? `@${record.tmuxWindowIndex}` : "";
-			return `${record.id}:${statusShort(record.status)}${win}`;
+			const entry = `${record.id}:${statusShort(record.status)}${win}`;
+			return theme.fg(statusColorRole(record.status), entry);
 		})
 		.join(" ");
 
