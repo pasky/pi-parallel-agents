@@ -654,6 +654,12 @@ test(
 			assert.ok(await exists(join(runtimeDir, fileName)), `runtime file missing: ${fileName}`);
 		}
 
+		const launchScript = await readFile(join(runtimeDir, "launch.sh"), "utf8");
+		assert.ok(
+			launchScript.includes("--skill") && launchScript.includes(".pi/parallel-agent-skills"),
+			"child launch script should load .pi/parallel-agent-skills via --skill so finish is discoverable",
+		);
+
 		const linked = await waitFor(
 			"child session link in registry",
 			async () => {
