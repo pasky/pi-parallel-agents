@@ -13,15 +13,13 @@ Keep your main coding flow unblocked by offloading side quests (questions, hotfi
 - Worktree lock diagnostics (warn on locked worktrees not tracked in registry)
 - Shared registry at `.pi/parallel-agents/registry.json`
 - Statusline summary of active agents in project sessions
-- Agent control tools:
+- Agent control tools (tool-only; no `/agent-check` or `/agent-send` slash commands):
   - `agent-start`
   - `agent-check`
   - `agent-wait-any`
   - `agent-send`
-- Supporting commands:
+- Supporting command:
   - `/agents`
-  - `/agent-check <id>`
-  - `/agent-send <id> <prompt>`
 - **`agent-setup` skill** — interactive setup via `/skill:agent-setup` (interviews you about merge policy, main branch, bootstrap hooks, then writes `.pi/parallel-agent-*.sh` and the child finish skill)
 
 ## Status
@@ -37,9 +35,9 @@ MVP in progress (baseline flow implemented).
 3. Inspect status:
    - statusline (`parallel-agents`)
    - `/agents`
-   - `/agent-check a-0001`
+   - `agent-check` tool (for a specific id, e.g. `a-0001`)
 4. Send follow-up:
-   - `/agent-send a-0001 please also add tests`
+   - `agent-send` tool (e.g. prompt: `please also add tests`)
 
 ## Tool contract (orchestrating parent agents)
 

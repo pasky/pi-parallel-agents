@@ -947,6 +947,13 @@ function parseAgentCommandArgs(raw: string): { task: string; model?: string } {
 	};
 }
 
+function normalizeAgentId(raw: string): string {
+	const trimmed = raw.trim();
+	if (!trimmed) return "";
+	const firstToken = trimmed.split(/\s+/, 1)[0];
+	return firstToken ?? "";
+}
+
 async function startAgent(pi: ExtensionAPI, ctx: ExtensionContext, params: StartAgentParams): Promise<StartAgentResult> {
 	ensureTmuxReady();
 
@@ -1089,11 +1096,19 @@ async function startAgent(pi: ExtensionAPI, ctx: ExtensionContext, params: Start
 }
 
 async function agentCheckPayload(stateRoot: string, agentId: string): Promise<Record<string, unknown>> {
-	const record = await refreshAgent(stateRoot, agentId);
+	const normalizedId = normalizeAgentId(agentId);
+	if (!normalizedId) {
+		return {
+			ok: false,
+			error: "No agent id was provided",
+		};
+	}
+
+	const record = await refreshAgent(stateRoot, normalizedId);
 	if (!record) {
 		return {
 			ok: false,
-			error: `Unknown agent id: ${agentId}`,
+			error: `Unknown agent id: ${normalizedId}`,
 		};
 	}
 
@@ -1120,15 +1135,20 @@ async function agentCheckPayload(stateRoot: string, agentId: string): Promise<Re
 }
 
 async function sendToAgent(stateRoot: string, agentId: string, prompt: string): Promise<{ ok: boolean; message: string }> {
-	const record = await refreshAgent(stateRoot, agentId);
+	const normalizedId = normalizeAgentId(agentId);
+	if (!normalizedId) {
+		return { ok: false, message: "No agent id was provided" };
+	}
+
+	const record = await refreshAgent(stateRoot, normalizedId);
 	if (!record) {
-		return { ok: false, message: `Unknown agent id: ${agentId}` };
+		return { ok: false, message: `Unknown agent id: ${normalizedId}` };
 	}
 	if (!record.tmuxWindowId) {
-		return { ok: false, message: `Agent ${agentId} has no tmux window id recorded` };
+		return { ok: false, message: `Agent ${normalizedId} has no tmux window id recorded` };
 	}
 	if (!tmuxWindowExists(record.tmuxWindowId)) {
-		return { ok: false, message: `Agent ${agentId} tmux window is not active` };
+		return { ok: false, message: `Agent ${normalizedId} tmux window is not active` };
 	}
 
 	let payload = prompt;
@@ -1146,7 +1166,7 @@ async function sendToAgent(stateRoot: string, agentId: string, prompt: string): 
 	}
 
 	await mutateRegistry(stateRoot, async (registry) => {
-		const current = registry.agents[agentId];
+		const current = registry.agents[normalizedId];
 		if (!current) return;
 		if (!isTerminalStatus(current.status)) {
 			current.status = "running";
@@ -1154,7 +1174,7 @@ async function sendToAgent(stateRoot: string, agentId: string, prompt: string): 
 		}
 	});
 
-	return { ok: true, message: `Sent prompt to ${agentId}` };
+	return { ok: true, message: `Sent prompt to ${normalizedId}` };
 }
 
 async function setChildRuntimeStatus(ctx: ExtensionContext, nextStatus: AgentStatus): Promise<void> {
@@ -1184,7 +1204,7 @@ async function waitForAny(
 	signal?: AbortSignal,
 	waitStatesInput?: string[],
 ): Promise<Record<string, unknown>> {
-	const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+	const uniqueIds = [...new Set(ids.map((id) => normalizeAgentId(id)).filter(Boolean))];
 	if (uniqueIds.length === 0) {
 		return { ok: false, error: "No agent ids were provided" };
 	}
@@ -1407,36 +1427,6 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(`Removed ${failedIds.length} agent(s): ${failedIds.join(", ")}`, "info");
 				}
 			}
-		},
-	});
-
-	pi.registerCommand("agent-check", {
-		description: "Check a parallel agent status and backlog tail: /agent-check <id>",
-		handler: async (args, ctx) => {
-			const id = args.trim();
-			if (!id) {
-				ctx.hasUI && ctx.ui.notify("Usage: /agent-check <id>", "error");
-				return;
-			}
-			const payload = await agentCheckPayload(getStateRoot(ctx), id);
-			renderInfoMessage(pi, ctx, `agent-check ${id}`, [JSON.stringify(payload, null, 2)]);
-		},
-	});
-
-	pi.registerCommand("agent-send", {
-		description: "Send follow-up to a parallel agent: /agent-send <id> <prompt>",
-		handler: async (args, ctx) => {
-			const trimmed = args.trim();
-			const splitAt = trimmed.indexOf(" ");
-			if (!trimmed || splitAt <= 0) {
-				ctx.hasUI && ctx.ui.notify("Usage: /agent-send <id> <prompt>", "error");
-				return;
-			}
-
-			const id = trimmed.slice(0, splitAt).trim();
-			const prompt = trimmed.slice(splitAt + 1);
-			const sent = await sendToAgent(getStateRoot(ctx), id, prompt);
-			ctx.hasUI && ctx.ui.notify(sent.message, sent.ok ? "info" : "error");
 		},
 	});
 

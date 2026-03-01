@@ -48,10 +48,10 @@ node -e 'const fs=require("fs");const p=".pi/parallel-agents/registry.json";if(!
 
 ### Recovery
 
-1. Inspect current state:
+1. Inspect current state (tool):
 
 ```text
-/agent-check <id>
+agent-check { "id": "<id>" }
 ```
 
 2. Inspect runtime artifacts:
@@ -63,10 +63,10 @@ tail -n 120 ".pi/parallel-agents/runtime/$ID/backlog.log"
 [ -f ".pi/parallel-agents/runtime/$ID/exit.json" ] && cat ".pi/parallel-agents/runtime/$ID/exit.json"
 ```
 
-3. If tmux window still exists, try graceful stop:
+3. If tmux window still exists, try graceful stop (tool):
 
 ```text
-/agent-send <id> !/quit
+agent-send { "id": "<id>", "prompt": "!/quit" }
 ```
 
 4. If tmux window is gone, treat as terminal crash:
@@ -104,7 +104,7 @@ ls -l "$LOCK" 2>/dev/null || echo "no registry.lock"
 rm -f ".pi/parallel-agents/registry.lock"
 ```
 
-3. Retry the failed command (`/agents`, `/agent-check`, tool call, etc.).
+3. Retry the failed action (`/agents`, `agent-check` tool, etc.).
 4. If contention recurs, reduce concurrent parent sessions mutating the same registry.
 
 ---
@@ -150,7 +150,7 @@ If non-empty, preserve work first (commit/patch) before destructive cleanup.
 Use this when an agent is terminal (`failed` or `crashed`) and you want to tidy state.
 
 1. Capture diagnostics first:
-   - `/agent-check <id>`
+   - `agent-check` tool for `<id>`
    - save backlog/error if needed
 2. Preserve any useful work in the agent worktree (`git -C <worktree> status`, patch/commit).
 3. Remove registry entry (recommended path):

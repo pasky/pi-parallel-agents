@@ -369,6 +369,53 @@ async function waitForToolResultInSession(harness, toolName, timeoutMs = 90_000)
 	);
 }
 
+async function waitForNextToolResultInSession(harness, toolName, previousCount, timeoutMs = 90_000) {
+	return waitFor(
+		`next tool result for "${toolName}" in parent session`,
+		async () => {
+			const entries = await readParentSessionEntries(harness);
+			const results = extractToolResultPayloads(entries, toolName);
+			return results.length > previousCount ? results[results.length - 1] : false;
+		},
+		{ timeoutMs, intervalMs: 500 },
+	);
+}
+
+async function callToolViaPrompt(harness, toolName, params, options = {}) {
+	const timeoutMs = options.timeoutMs ?? 90_000;
+	const retries = options.retries ?? 2;
+	const argsJson = JSON.stringify(params);
+	let lastError;
+
+	for (let attempt = 1; attempt <= retries; attempt += 1) {
+		const beforeEntries = await readParentSessionEntries(harness);
+		const beforeCount = extractToolResultPayloads(beforeEntries, toolName).length;
+
+		const prompt =
+			attempt === 1
+				? `Use the ${toolName} tool now with this exact JSON arguments object: ${argsJson}. Do not call any other tool.`
+				: `Important: call the ${toolName} tool immediately (not text-only). Use exactly this JSON arguments object: ${argsJson}.`;
+
+		await sendParentCommand(harness, prompt);
+
+		try {
+			return await waitForNextToolResultInSession(harness, toolName, beforeCount, timeoutMs);
+		} catch (error) {
+			lastError = error;
+		}
+	}
+
+	throw lastError ?? new Error(`Timed out waiting for ${toolName} tool result`);
+}
+
+async function callAgentCheckTool(harness, id, timeoutMs = 90_000) {
+	return callToolViaPrompt(harness, "agent-check", { id }, { timeoutMs, retries: 3 });
+}
+
+async function callAgentSendTool(harness, id, prompt, timeoutMs = 90_000) {
+	return callToolViaPrompt(harness, "agent-send", { id, prompt }, { timeoutMs, retries: 3 });
+}
+
 async function closeChildWindowAfterPrompt(harness, agentId) {
 	const agent = await waitForAgent(harness, agentId, { terminal: true, timeoutMs: 120_000 });
 	const windowId = agent.tmuxWindowId;
@@ -573,7 +620,7 @@ function spawnWithCapture(command, args, options = {}) {
 }
 
 test(
-	"integration: /agent launch, /agent-check states, /agent-send steering+!interrupt, child press-any-key close",
+	"integration: /agent launch + agent-check/agent-send tools + child press-any-key close",
 	{ timeout: TEST_TIMEOUT },
 	async (t) => {
 		if (!assertAuthOrSkip(t)) return;
@@ -619,19 +666,20 @@ test(
 		await sendParentCommand(harness, "/agents");
 		await waitForParentContains(harness, "a-0001", 30_000);
 
-		await sendParentCommand(harness, "/agent-check a-0001");
-		await waitForParentContains(harness, "agent-check a-0001", 30_000);
-		await waitForParentContains(harness, '"status": "running"', 30_000);
-		await waitForParentContains(harness, '"backlog": [', 30_000);
+		const runningCheck = await callAgentCheckTool(harness, "a-0001", 60_000);
+		assert.equal(runningCheck.payload.ok, true, `agent-check should succeed: ${JSON.stringify(runningCheck.payload)}`);
+		assert.equal(runningCheck.payload.agent?.id, "a-0001");
+		assert.ok(typeof runningCheck.payload.agent?.status === "string", "agent-check should return agent.status");
+		assert.ok(Array.isArray(runningCheck.payload.backlog), "agent-check should return backlog array");
 		await waitForChildPiBooted(harness, "a-0001", 120_000);
 
 		const steeringToken = `steering-token-${Date.now()}`;
-		await sendParentCommand(harness, `/agent-send a-0001 ${steeringToken}`);
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
+		const steeringSend = await callAgentSendTool(harness, "a-0001", steeringToken, 60_000);
+		assert.equal(steeringSend.payload.ok, true, `agent-send should succeed: ${JSON.stringify(steeringSend.payload)}`);
 		await waitForBacklogContains(harness, "a-0001", steeringToken, 90_000);
 
-		await sendParentCommand(harness, "/agent-send a-0001 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
+		const quitSend = await callAgentSendTool(harness, "a-0001", "!/quit", 60_000);
+		assert.equal(quitSend.payload.ok, true, `agent-send /quit should succeed: ${JSON.stringify(quitSend.payload)}`);
 		await waitForBacklogContains(harness, "a-0001", "/quit", 90_000);
 
 		const done = await waitForAgent(harness, "a-0001", { terminal: true, timeoutMs: 120_000 });
@@ -639,8 +687,9 @@ test(
 		assert.equal(done.exitCode, 0);
 		assert.ok(await exists(join(runtimeDir, "exit.json")), "exit.json should be created when child exits");
 
-		await sendParentCommand(harness, "/agent-check a-0001");
-		await waitForParentContains(harness, '"status": "done"', 30_000);
+		const doneCheck = await callAgentCheckTool(harness, "a-0001", 60_000);
+		assert.equal(doneCheck.payload.ok, true, `agent-check after quit should succeed: ${JSON.stringify(doneCheck.payload)}`);
+		assert.equal(doneCheck.payload.agent?.status, "done", `expected done status: ${JSON.stringify(doneCheck.payload)}`);
 		await waitForParentContains(harness, "Press any key to close this tmux window", 30_000);
 
 		await closeChildWindowAfterPrompt(harness, "a-0001");
@@ -666,9 +715,9 @@ test(
 		await waitForParentContains(harness, "warning: Locked worktree is not tracked in registry", 30_000);
 		await waitForChildPiBooted(harness, "a-0001", 120_000);
 
-		await sendParentCommand(harness, "/agent-send a-0001 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
-		await sendParentCommand(harness, "/agent-send a-0001 !/quit");
+		const firstQuitSend = await callAgentSendTool(harness, "a-0001", "!/quit", 60_000);
+		assert.equal(firstQuitSend.payload.ok, true, `agent-send should succeed: ${JSON.stringify(firstQuitSend.payload)}`);
+		await callAgentSendTool(harness, "a-0001", "!/quit", 60_000);
 		await waitForAgent(harness, "a-0001", { terminal: true, timeoutMs: 180_000 });
 		await closeChildWindowAfterPrompt(harness, "a-0001");
 
@@ -683,9 +732,9 @@ test(
 		assert.equal(second.worktreePath, first.worktreePath, "expected worktree slot to be reused");
 		await waitForChildPiBooted(harness, "a-0002", 120_000);
 
-		await sendParentCommand(harness, "/agent-send a-0002 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0002", 20_000);
-		await sendParentCommand(harness, "/agent-send a-0002 !/quit");
+		const secondQuitSend = await callAgentSendTool(harness, "a-0002", "!/quit", 60_000);
+		assert.equal(secondQuitSend.payload.ok, true, `agent-send should succeed: ${JSON.stringify(secondQuitSend.payload)}`);
+		await callAgentSendTool(harness, "a-0002", "!/quit", 60_000);
 		await waitForAgent(harness, "a-0002", { terminal: true, timeoutMs: 180_000 });
 		await closeChildWindowAfterPrompt(harness, "a-0002");
 	},
@@ -726,11 +775,11 @@ test(
 		await waitForChildPiBooted(harness, "a-0001", 120_000);
 		await waitForChildPiBooted(harness, "a-0002", 120_000);
 
-		await sendParentCommand(harness, "/agent-send a-0001 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
-		await sendParentCommand(harness, "/agent-send a-0002 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0002", 20_000);
-		await sendParentCommand(harness, "/agent-send a-0002 !/quit");
+		const quitA1 = await callAgentSendTool(harness, "a-0001", "!/quit", 60_000);
+		assert.equal(quitA1.payload.ok, true, `agent-send should succeed for a-0001: ${JSON.stringify(quitA1.payload)}`);
+		const quitA2 = await callAgentSendTool(harness, "a-0002", "!/quit", 60_000);
+		assert.equal(quitA2.payload.ok, true, `agent-send should succeed for a-0002: ${JSON.stringify(quitA2.payload)}`);
+		await callAgentSendTool(harness, "a-0002", "!/quit", 60_000);
 
 		await waitForAgent(harness, "a-0001", { terminal: true, timeoutMs: 120_000 });
 		await waitForAgent(harness, "a-0002", { terminal: true, timeoutMs: 180_000 });
@@ -800,11 +849,11 @@ acquire_lock() {
     fi
     elapsed=$(( $(date +%s) - started ))
     if [[ "$elapsed" -ge "$MERGE_LOCK_TIMEOUT" ]]; then
-      echo "[parallel-agent-finish] Timed out after ${MERGE_LOCK_TIMEOUT}s waiting for merge lock."
+      echo "[parallel-agent-finish] Timed out after \${MERGE_LOCK_TIMEOUT}s waiting for merge lock."
       echo "[parallel-agent-finish] Stale lock? Inspect: $LOCK_FILE"
       exit 3
     fi
-    echo "[parallel-agent-finish] Waiting for merge lock... (${elapsed}s / ${MERGE_LOCK_TIMEOUT}s)"
+    echo "[parallel-agent-finish] Waiting for merge lock... (\${elapsed}s / \${MERGE_LOCK_TIMEOUT}s)"
     sleep 1
   done
 }
@@ -909,8 +958,7 @@ done
 // integration coverage, plus important response-shape contracts:
 //
 //  1. agent-check response shapes — unknown id → ok:false, known → ok:true
-//     with a full field audit (slash-command path calls agentCheckPayload()
-//     directly, same function used by the agent-check tool execute()).
+//     with a full field audit via real tool invocation.
 //
 //  2. agent-start tool execute → { ok: true } — the specific fix: ok:true was
 //     previously absent from the tool JSON response.  Verified by reading the
@@ -932,9 +980,7 @@ done
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Test 1 — agent-check response shapes (slash-command path, no LLM needed
-// after startup).  agentCheckPayload() is the shared implementation called by
-// both the /agent-check command handler AND the agent-check tool execute().
+// Test 1 — agent-check response shapes via tool invocation.
 // ---------------------------------------------------------------------------
 test(
 	"integration: tool-contract — agent-check shapes: unknown id → ok:false, known agent → ok:true with all fields",
@@ -945,37 +991,34 @@ test(
 		const harness = await createHarness(t);
 
 		// — Unknown id -------------------------------------------------------
-		// agentCheckPayload() must return { ok: false, error: "Unknown agent id: <id>" }.
-		// The slash-command handler renders this JSON directly into the parent pane.
-		await sendParentCommand(harness, "/agent-check a-9999");
-		await waitForParentContains(harness, '"ok": false', 30_000);
-		// The error message should name the unknown id so the caller can identify it.
-		await waitForParentContains(harness, "a-9999", 10_000);
+		const unknownCheck = await callAgentCheckTool(harness, "a-9999", 60_000);
+		assert.equal(unknownCheck.payload.ok, false, `unknown id should return ok:false: ${JSON.stringify(unknownCheck.payload)}`);
+		assert.ok(typeof unknownCheck.payload.error === "string", "unknown id should return an error string");
+		assert.ok(
+			unknownCheck.payload.error.includes("a-9999"),
+			`error should include unknown id, got: ${unknownCheck.payload.error}`,
+		);
 
 		// — Known agent -------------------------------------------------------
 		// Start one agent so we have a real registry entry to inspect.
 		await sendParentCommand(harness, `/agent -model ${MODEL_SPEC} shape-audit smoke`);
 		const spawned = await waitForSpawnedAgent(harness, "a-0001");
 
-		await sendParentCommand(harness, "/agent-check a-0001");
+		const knownCheck = await callAgentCheckTool(harness, "a-0001", 60_000);
+		assert.equal(knownCheck.payload.ok, true, `known id should return ok:true: ${JSON.stringify(knownCheck.payload)}`);
+		assert.ok(knownCheck.payload.agent, "agent-check success should include agent object");
+		assert.ok(Array.isArray(knownCheck.payload.backlog), "agent-check success should include backlog array");
 
-		// Top-level success shape
-		await waitForParentContains(harness, '"ok": true', 30_000);
-		await waitForParentContains(harness, '"agent":', 10_000);
-		await waitForParentContains(harness, '"backlog":', 10_000);
-
-		// agent sub-object fields (exhaustive field audit)
-		await waitForParentContains(harness, '"id": "a-0001"', 10_000);
-		await waitForParentContains(harness, '"branch": "parallel-agent/a-0001"', 10_000);
-		await waitForParentContains(harness, '"status":', 10_000);
-		await waitForParentContains(harness, '"task":', 10_000);
-		await waitForParentContains(harness, '"startedAt":', 10_000);
-		await waitForParentContains(harness, '"warnings":', 10_000);
-		// tmuxWindowId / tmuxWindowIndex must appear (registry should have them)
-		await waitForParentContains(harness, '"tmuxWindowId":', 10_000);
-		await waitForParentContains(harness, '"tmuxWindowIndex":', 10_000);
-		// worktreePath from registry
-		await waitForParentContains(harness, '"worktreePath":', 10_000);
+		const checkedAgent = knownCheck.payload.agent;
+		assert.equal(checkedAgent.id, "a-0001");
+		assert.equal(checkedAgent.branch, "parallel-agent/a-0001");
+		assert.ok(typeof checkedAgent.status === "string", "agent.status should be present");
+		assert.ok(typeof checkedAgent.task === "string", "agent.task should be present");
+		assert.ok(typeof checkedAgent.startedAt === "string", "agent.startedAt should be present");
+		assert.ok(Array.isArray(checkedAgent.warnings), "agent.warnings should be an array");
+		assert.ok(typeof checkedAgent.tmuxWindowId === "string", "agent.tmuxWindowId should be a string");
+		assert.ok(typeof checkedAgent.tmuxWindowIndex === "number", "agent.tmuxWindowIndex should be a number");
+		assert.ok(typeof checkedAgent.worktreePath === "string", "agent.worktreePath should be present");
 
 		// Verify the tmux fields match what the registry recorded
 		const reg = await readRegistry(harness);
@@ -989,8 +1032,8 @@ test(
 		// Without this, C-c arrives before Pi is ready and is discarded,
 		// leaving the agent running until waitForAgent(terminal) times out.
 		await waitForChildPiBooted(harness, "a-0001", 120_000);
-		await sendParentCommand(harness, "/agent-send a-0001 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
+		const quitSend = await callAgentSendTool(harness, "a-0001", "!/quit", 60_000);
+		assert.equal(quitSend.payload.ok, true, `agent-send should succeed: ${JSON.stringify(quitSend.payload)}`);
 		await waitForAgent(harness, "a-0001", { terminal: true, timeoutMs: 120_000 });
 		await closeChildWindowAfterPrompt(harness, "a-0001");
 	},
@@ -1096,8 +1139,8 @@ test(
 		// poll without sleeping.  The returned payload must match the agent-check
 		// success shape: { ok: true, agent: {...}, backlog: [...] }.
 		await waitForChildPiBooted(harness, "a-0001", 120_000);
-		await sendParentCommand(harness, "/agent-send a-0001 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
+		const quitSend = await callAgentSendTool(harness, "a-0001", "!/quit", 60_000);
+		assert.equal(quitSend.payload.ok, true, `agent-send should succeed: ${JSON.stringify(quitSend.payload)}`);
 		await waitForAgent(harness, "a-0001", { terminal: true, timeoutMs: 120_000 });
 
 		await sendParentCommand(
@@ -1230,23 +1273,10 @@ test(
 //
 // WHY THIS IS A GENUINE END-TO-END INTEGRATION TEST:
 //
-//   This test exercises the complete delivery path for interrupt + text without
-//   involving the LLM after the agent is running:
-//
-//     1. /agent starts a real child Pi process in a real tmux window.
-//     2. waitForChildPiBooted polls the *real* backlog.log file until Pi's
-//        startup banner appears — proving the child process is genuinely alive.
-//     3. /agent-send <id> !<token> invokes the real slash-command handler
-//        which (a) sends a real tmux C-c keystroke to the child pane,
-//        (b) sleeps 300 ms (the bug-fix pause), then
-//        (c) sends the follow-up token as real keystrokes to the child pane.
-//     4. waitForBacklogContains polls the *real* backlog.log until the token
-//        appears, proving the text reached the child Pi process's input queue.
-//
-//   The observable assertion — unique token written by this process's test run
-//   appearing in a file owned by a different process in a different tmux window
-//   — is as end-to-end as integration testing gets.  There is no LLM in the
-//   critical assertion path.
+//   1. /agent starts a real child Pi process in a real tmux window.
+//   2. The parent is prompted to invoke the real `agent-send` tool.
+//   3. The tool sends real keystrokes (including interrupt + 300 ms pause).
+//   4. Assertions read the real child backlog.log for unique tokens.
 //
 // Bug fixed: before the 300 ms sleep fix, C-c was followed immediately by the
 // follow-up text.  If Pi's interrupt handler was still running when the text
@@ -1268,16 +1298,16 @@ test(
 		// Step 1: plain send — confirm the basic send path works end-to-end.
 		// A unique token avoids false-positive matches from prior test runs.
 		const plainToken = `plain-send-${Date.now()}`;
-		await sendParentCommand(harness, `/agent-send a-0001 ${plainToken}`);
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
+		const plainSend = await callAgentSendTool(harness, "a-0001", plainToken, 60_000);
+		assert.equal(plainSend.payload.ok, true, `plain agent-send should succeed: ${JSON.stringify(plainSend.payload)}`);
 		await waitForBacklogContains(harness, "a-0001", plainToken, 60_000);
 
 		// Step 2: interrupt + follow-up text using the ! prefix.
 		// This exercises the race-condition fix: C-c → sleep(300 ms) → send text.
 		// The unique token is generated after Step 1 completes so timestamps differ.
 		const interruptToken = `after-interrupt-${Date.now()}`;
-		await sendParentCommand(harness, `/agent-send a-0001 !${interruptToken}`);
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
+		const interruptSend = await callAgentSendTool(harness, "a-0001", `!${interruptToken}`, 60_000);
+		assert.equal(interruptSend.payload.ok, true, `interrupt agent-send should succeed: ${JSON.stringify(interruptSend.payload)}`);
 
 		// The follow-up token MUST appear in the child's real backlog.log file.
 		// Without the 300 ms sleep the token can be dropped in the interrupt-
@@ -1287,8 +1317,8 @@ test(
 		// Step 3: cleanup — bare "!" (interrupt-only, no text) sends /quit.
 		// The bare-interrupt path skips the 300 ms sleep; this confirms that the
 		// no-follow-up branch is handled cleanly (no dangling send, no extra sleep).
-		await sendParentCommand(harness, "/agent-send a-0001 !/quit");
-		await waitForParentContains(harness, "Sent prompt to a-0001", 20_000);
+		const quitSend = await callAgentSendTool(harness, "a-0001", "!/quit", 60_000);
+		assert.equal(quitSend.payload.ok, true, `quit agent-send should succeed: ${JSON.stringify(quitSend.payload)}`);
 		await waitForAgent(harness, "a-0001", { terminal: true, timeoutMs: 120_000 });
 		await closeChildWindowAfterPrompt(harness, "a-0001");
 	},

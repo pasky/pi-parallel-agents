@@ -300,5 +300,5 @@ Tell the user which files were created, updated, or skipped, and how to proceed:
 
 - Start an agent: `/agent <task description>`
 - Watch status: statusline shows active agents; `/agents` lists all
-- Check a specific agent: `/agent-check <id>`
-- Send follow-up: `/agent-send <id> <message>`
+- Check a specific agent: use the `agent-check` tool
+- Send follow-up: use the `agent-send` tool
