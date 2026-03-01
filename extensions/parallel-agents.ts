@@ -420,15 +420,49 @@ async function mutateRegistry(stateRoot: string, mutator: (registry: RegistryFil
 	});
 }
 
-function nextAgentId(registry: RegistryFile): string {
+function parseAgentOrdinal(raw: string): number | undefined {
+	const match = raw.match(/^a-(\d+)$/);
+	if (!match) return undefined;
+	const parsed = Number(match[1]);
+	if (!Number.isFinite(parsed)) return undefined;
+	return parsed;
+}
+
+function maxAgentOrdinalInRegistry(registry: RegistryFile): number {
 	let max = 0;
 	for (const id of Object.keys(registry.agents)) {
-		const m = id.match(/^a-(\d+)$/);
-		if (!m) continue;
-		const n = Number(m[1]);
-		if (Number.isFinite(n)) max = Math.max(max, n);
+		const parsed = parseAgentOrdinal(id);
+		if (parsed === undefined) continue;
+		max = Math.max(max, parsed);
 	}
-	return `a-${String(max + 1).padStart(4, "0")}`;
+	return max;
+}
+
+function maxAgentOrdinalInCheckedOutParallelBranches(repoRoot: string): number {
+	const listed = run("git", ["-C", repoRoot, "worktree", "list", "--porcelain"]);
+	if (!listed.ok) return 0;
+
+	let max = 0;
+	for (const line of listed.stdout.split(/\r?\n/)) {
+		if (!line.startsWith("branch ")) continue;
+		const branchRef = line.slice("branch ".length).trim();
+		if (!branchRef || branchRef === "(detached)") continue;
+		const branch = branchRef.startsWith("refs/heads/") ? branchRef.slice("refs/heads/".length) : branchRef;
+		const match = branch.match(/^parallel-agent\/(a-\d+)$/);
+		if (!match) continue;
+		const parsed = parseAgentOrdinal(match[1]);
+		if (parsed === undefined) continue;
+		max = Math.max(max, parsed);
+	}
+
+	return max;
+}
+
+function nextAgentId(registry: RegistryFile, repoRoot: string): string {
+	const maxRegistry = maxAgentOrdinalInRegistry(registry);
+	const maxCheckedOut = maxAgentOrdinalInCheckedOutParallelBranches(repoRoot);
+	const next = Math.max(maxRegistry, maxCheckedOut) + 1;
+	return `a-${String(next).padStart(4, "0")}`;
 }
 
 async function writeWorktreeLock(worktreePath: string, payload: Record<string, unknown>): Promise<void> {
@@ -465,6 +499,20 @@ type WorktreeSlot = {
 	path: string;
 };
 
+type OrphanWorktreeLock = {
+	worktreePath: string;
+	lockPath: string;
+	lockAgentId?: string;
+	lockPid?: number;
+	lockTmuxWindowId?: string;
+	blockers: string[];
+};
+
+type OrphanWorktreeLockScan = {
+	reclaimable: OrphanWorktreeLock[];
+	blocked: OrphanWorktreeLock[];
+};
+
 async function listWorktreeSlots(repoRoot: string): Promise<WorktreeSlot[]> {
 	const parent = dirname(repoRoot);
 	const prefix = `${basename(repoRoot)}-agent-worktree-`;
@@ -485,6 +533,101 @@ async function listWorktreeSlots(repoRoot: string): Promise<WorktreeSlot[]> {
 	}
 	slots.sort((a, b) => a.index - b.index);
 	return slots;
+}
+
+function parseOptionalPid(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0) {
+		return value;
+	}
+	if (typeof value === "string" && /^\d+$/.test(value)) {
+		const parsed = Number(value);
+		if (Number.isFinite(parsed) && parsed > 0) return parsed;
+	}
+	return undefined;
+}
+
+function isPidAlive(pid?: number): boolean {
+	if (pid === undefined) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err: any) {
+		return err?.code === "EPERM";
+	}
+}
+
+function summarizeOrphanLock(lock: OrphanWorktreeLock): string {
+	const details: string[] = [];
+	if (lock.lockAgentId) details.push(`agent:${lock.lockAgentId}`);
+	if (lock.lockTmuxWindowId) details.push(`tmux:${lock.lockTmuxWindowId}`);
+	if (lock.lockPid !== undefined) details.push(`pid:${lock.lockPid}`);
+	if (details.length === 0) return lock.worktreePath;
+	return `${lock.worktreePath} (${details.join(" ")})`;
+}
+
+async function scanOrphanWorktreeLocks(repoRoot: string, registry: RegistryFile): Promise<OrphanWorktreeLockScan> {
+	const slots = await listWorktreeSlots(repoRoot);
+	const reclaimable: OrphanWorktreeLock[] = [];
+	const blocked: OrphanWorktreeLock[] = [];
+
+	for (const slot of slots) {
+		const lockPath = join(slot.path, ".pi", "active.lock");
+		if (!(await fileExists(lockPath))) continue;
+
+		const raw = (await readJsonFile<Record<string, unknown>>(lockPath)) ?? {};
+		const lockAgentId = typeof raw.agentId === "string" ? raw.agentId : undefined;
+		if (lockAgentId && registry.agents[lockAgentId]) {
+			continue;
+		}
+
+		const lockPid = parseOptionalPid(raw.pid);
+		const lockTmuxWindowId = typeof raw.tmuxWindowId === "string" ? raw.tmuxWindowId : undefined;
+
+		const blockers: string[] = [];
+		if (isPidAlive(lockPid)) {
+			blockers.push(`pid ${lockPid} is still alive`);
+		}
+		if (lockTmuxWindowId && tmuxWindowExists(lockTmuxWindowId)) {
+			blockers.push(`tmux window ${lockTmuxWindowId} is active`);
+		}
+
+		const candidate: OrphanWorktreeLock = {
+			worktreePath: slot.path,
+			lockPath,
+			lockAgentId,
+			lockPid,
+			lockTmuxWindowId,
+			blockers,
+		};
+
+		if (blockers.length > 0) {
+			blocked.push(candidate);
+		} else {
+			reclaimable.push(candidate);
+		}
+	}
+
+	return { reclaimable, blocked };
+}
+
+async function reclaimOrphanWorktreeLocks(locks: OrphanWorktreeLock[]): Promise<{
+	removed: string[];
+	failed: Array<{ lockPath: string; error: string }>;
+}> {
+	const removed: string[] = [];
+	const failed: Array<{ lockPath: string; error: string }> = [];
+
+	for (const lock of locks) {
+		try {
+			await fs.unlink(lock.lockPath);
+			removed.push(lock.lockPath);
+		} catch (err: any) {
+			if (err?.code === "ENOENT") continue;
+			failed.push({ lockPath: lock.lockPath, error: stringifyError(err) });
+		}
+	}
+
+	return { removed, failed };
 }
 
 async function syncParallelAgentPiFiles(parentRepoRoot: string, worktreePath: string): Promise<void> {
@@ -972,7 +1115,7 @@ async function startAgent(pi: ExtensionAPI, ctx: ExtensionContext, params: Start
 		await ensureDir(getMetaDir(stateRoot));
 
 		await mutateRegistry(stateRoot, async (registry) => {
-			agentId = nextAgentId(registry);
+			agentId = nextAgentId(registry, repoRoot);
 			registry.agents[agentId] = {
 				id: agentId,
 				parentSessionId,
@@ -1392,25 +1535,44 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 		description: "List tracked parallel agents",
 		handler: async (_args, ctx) => {
 			const stateRoot = getStateRoot(ctx);
-			const registry = await refreshAllAgents(stateRoot);
+			const repoRoot = resolveGitRoot(stateRoot);
+			let registry = await refreshAllAgents(stateRoot);
 			const records = Object.values(registry.agents).sort((a, b) => a.id.localeCompare(b.id));
+			let orphanLocks = await scanOrphanWorktreeLocks(repoRoot, registry);
 
-			if (records.length === 0) {
+			if (records.length === 0 && orphanLocks.reclaimable.length === 0 && orphanLocks.blocked.length === 0) {
 				ctx.hasUI && ctx.ui.notify("No tracked parallel agents yet.", "info");
 				return;
 			}
 
 			const lines: string[] = [];
 			const failedIds: string[] = [];
-			for (const record of records) {
-				const win = record.tmuxWindowIndex !== undefined ? `#${record.tmuxWindowIndex}` : "-";
-				lines.push(`${record.id}  ${record.status}  win:${win}  branch:${record.branch ?? "-"}`);
-				lines.push(`  task: ${summarizeTask(record.task)}`);
-				if (record.error) lines.push(`  error: ${record.error}`);
-				if (record.status === "failed" || record.status === "crashed") {
-					failedIds.push(record.id);
+
+			if (records.length === 0) {
+				lines.push("(no tracked agents)");
+			} else {
+				for (const record of records) {
+					const win = record.tmuxWindowIndex !== undefined ? `#${record.tmuxWindowIndex}` : "-";
+					lines.push(`${record.id}  ${record.status}  win:${win}  branch:${record.branch ?? "-"}`);
+					lines.push(`  task: ${summarizeTask(record.task)}`);
+					if (record.error) lines.push(`  error: ${record.error}`);
+					if (record.status === "failed" || record.status === "crashed") {
+						failedIds.push(record.id);
+					}
 				}
 			}
+
+			if (orphanLocks.reclaimable.length > 0 || orphanLocks.blocked.length > 0) {
+				if (lines.length > 0) lines.push("");
+				lines.push("orphan worktree locks:");
+				for (const lock of orphanLocks.reclaimable) {
+					lines.push(`  reclaimable: ${summarizeOrphanLock(lock)}`);
+				}
+				for (const lock of orphanLocks.blocked) {
+					lines.push(`  blocked: ${summarizeOrphanLock(lock)} (${lock.blockers.join("; ")})`);
+				}
+			}
+
 			renderInfoMessage(pi, ctx, "parallel-agents", lines);
 
 			if (failedIds.length > 0 && ctx.hasUI) {
@@ -1419,13 +1581,50 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 					`Remove ${failedIds.length} failed/crashed agent(s) from registry: ${failedIds.join(", ")}`,
 				);
 				if (confirmed) {
-					await mutateRegistry(stateRoot, async (registry) => {
+					registry = await mutateRegistry(stateRoot, async (next) => {
 						for (const id of failedIds) {
-							delete registry.agents[id];
+							delete next.agents[id];
 						}
 					});
 					ctx.ui.notify(`Removed ${failedIds.length} agent(s): ${failedIds.join(", ")}`, "info");
 				}
+			}
+
+			orphanLocks = await scanOrphanWorktreeLocks(repoRoot, registry);
+
+			if (orphanLocks.reclaimable.length > 0 && ctx.hasUI) {
+				const preview = orphanLocks.reclaimable.slice(0, 6).map((lock) => `- ${summarizeOrphanLock(lock)}`);
+				if (orphanLocks.reclaimable.length > preview.length) {
+					preview.push(`- ... and ${orphanLocks.reclaimable.length - preview.length} more`);
+				}
+
+				const confirmed = await ctx.ui.confirm(
+					"Reclaim orphan worktree locks?",
+					[
+						`Remove ${orphanLocks.reclaimable.length} orphan worktree lock(s)?`,
+						"Only lock files with no tracked registry agent and no live pid/tmux signal are included.",
+						"",
+						...preview,
+					].join("\n"),
+				);
+				if (confirmed) {
+					const reclaimed = await reclaimOrphanWorktreeLocks(orphanLocks.reclaimable);
+					if (reclaimed.failed.length === 0) {
+						ctx.ui.notify(`Reclaimed ${reclaimed.removed.length} orphan worktree lock(s).`, "info");
+					} else {
+						ctx.ui.notify(
+							`Reclaimed ${reclaimed.removed.length} orphan lock(s); failed ${reclaimed.failed.length}.`,
+							"warning",
+						);
+					}
+				}
+			}
+
+			if (orphanLocks.blocked.length > 0 && ctx.hasUI) {
+				ctx.ui.notify(
+					`Found ${orphanLocks.blocked.length} orphan lock(s) that look live; leaving them untouched.`,
+					"warning",
+				);
 			}
 		},
 	});

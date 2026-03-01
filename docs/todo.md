@@ -5,7 +5,7 @@
 - Default finish path is local merge (with explicit in-skill user confirmation).
 - `/agent` includes context summary by default.
 - Worktree pool is dynamic (no hard cap).
-- Stale locks are warning-only in MVP.
+- Stale locks are warning-only by default in MVP; `/agents` can offer user-confirmed auto-reclaim for orphan worktree locks.
 - Child-local `LGTM` can trigger finish flow.
 - Parent checkout is not forced read-only.
 

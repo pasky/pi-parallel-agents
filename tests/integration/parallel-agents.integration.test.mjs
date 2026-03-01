@@ -495,6 +495,21 @@ async function createHarness(t, options = {}) {
 	run("git", ["add", "."], { cwd: repoRoot });
 	run("git", ["commit", "-m", "fixture init"], { cwd: repoRoot });
 
+	if (options.lockedParallelAgentSlot) {
+		const occupiedSlotPath = join(rootDir, `${basename(repoRoot)}-agent-worktree-0001`);
+		run("git", ["worktree", "add", "-B", "parallel-agent/a-0001", occupiedSlotPath, "main"], { cwd: repoRoot });
+		await mkdir(join(occupiedSlotPath, ".pi"), { recursive: true });
+		await writeFile(
+			join(occupiedSlotPath, ".pi", "active.lock"),
+			JSON.stringify({
+				agentId: "a-0001",
+				pid: 123456,
+				branch: "parallel-agent/a-0001",
+				startedAt: new Date().toISOString(),
+			}) + "\n",
+		);
+	}
+
 	if (options.staleLockSlot) {
 		const staleSlotPath = join(rootDir, `${basename(repoRoot)}-agent-worktree-0001`);
 		await mkdir(join(staleSlotPath, ".pi"), { recursive: true });
@@ -693,6 +708,33 @@ test(
 		await waitForParentContains(harness, "Press any key to close this tmux window", 30_000);
 
 		await closeChildWindowAfterPrompt(harness, "a-0001");
+	},
+);
+
+test(
+	"integration: next agent id skips checked-out parallel-agent branch in a stale locked slot",
+	{ timeout: TEST_TIMEOUT },
+	async (t) => {
+		if (!assertAuthOrSkip(t)) return;
+
+		const harness = await createHarness(t, { lockedParallelAgentSlot: true });
+
+		await sendParentCommand(harness, `/agent -model ${MODEL_SPEC} branch collision regression`);
+		const started = await waitForSpawnedAgent(harness, "a-0002", 180_000);
+
+		assert.equal(started.branch, "parallel-agent/a-0002");
+		assert.ok(started.worktreePath.endsWith("0002"), `expected slot 0002, got ${started.worktreePath}`);
+		assert.ok(
+			(started.warnings ?? []).some((warning) => warning.includes("Locked worktree is not tracked in registry")),
+			"expected stale lock warning to be surfaced",
+		);
+
+		await waitForChildPiBooted(harness, "a-0002", 120_000);
+		const quitSend = await callAgentSendTool(harness, "a-0002", "!/quit", 60_000);
+		assert.equal(quitSend.payload.ok, true, `agent-send should succeed: ${JSON.stringify(quitSend.payload)}`);
+		await callAgentSendTool(harness, "a-0002", "!/quit", 60_000);
+		await waitForAgent(harness, "a-0002", { terminal: true, timeoutMs: 180_000 });
+		await closeChildWindowAfterPrompt(harness, "a-0002");
 	},
 );
 

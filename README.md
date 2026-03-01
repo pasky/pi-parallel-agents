@@ -19,7 +19,7 @@ Keep your main coding flow unblocked by offloading side quests (questions, hotfi
   - `agent-wait-any`
   - `agent-send`
 - Supporting command:
-  - `/agents`
+  - `/agents` (lists agents, optionally cleans failed/crashed registry entries, and now offers interactive orphan `.pi/active.lock` reclaim)
 - **`agent-setup` skill** — interactive setup via `/skill:agent-setup` (interviews you about merge policy, main branch, bootstrap hooks, then writes `.pi/parallel-agent-*.sh` and the child finish skill)
 
 ## Status

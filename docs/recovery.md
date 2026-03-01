@@ -127,14 +127,16 @@ find .. -maxdepth 2 -type f -path "../${REPO_NAME}-agent-worktree-*/.pi/active.l
 ```
 
 2. Inspect each lock and cross-check with `/agents` or `registry.json`.
-3. If lock is orphaned (no matching registry entry and no live tmux window), remove it:
+3. Fast path: run `/agents` and confirm **Reclaim orphan worktree locks?** when offered.
+   - This only targets orphan locks with no tracked registry agent and no live pid/tmux signal.
+4. If you prefer manual cleanup, remove lock files directly:
 
 ```bash
 LOCK="../<repo>-agent-worktree-0007/.pi/active.lock"
 rm -f "$LOCK"
 ```
 
-4. Before reusing/removing that worktree, check for uncommitted changes:
+5. Before reusing/removing that worktree, check for uncommitted changes:
 
 ```bash
 WT="../<repo>-agent-worktree-0007"

@@ -41,7 +41,7 @@ Create the three files below. For each file, check whether it already exists bef
 
 Write this file and make it executable (`chmod +x`).
 
-Use `MAIN_BRANCH` set to whatever the user specified in question 1 (or `main` by default). The start script must enforce branch/head sync **before** bootstrap.
+Use `MAIN_BRANCH` set to whatever the user specified in question 1 (or `main` by default). The start script must enforce branch/head sync **before** bootstrap. Do **not** force-update the local `MAIN_BRANCH` ref (e.g. `git branch -f`) because that branch is often checked out in the parent worktree.
 
 **Default content** — substitute `MAIN_BRANCH_VALUE` with the actual branch name, then append bootstrap steps based on question 2:
 
@@ -73,14 +73,14 @@ else
   echo "[parallel-agent-start] No origin remote configured; checking local refs only."
 fi
 
+BASE_REF=""
+BASE_LABEL=""
 if git -C "$WORKTREE" show-ref --verify --quiet "$REMOTE_MAIN_REF"; then
-  echo "[parallel-agent-start] Syncing local $MAIN_BRANCH to origin/$MAIN_BRANCH."
-  if git -C "$WORKTREE" show-ref --verify --quiet "$LOCAL_MAIN_REF"; then
-    git -C "$WORKTREE" branch -f "$MAIN_BRANCH" "origin/$MAIN_BRANCH" >/dev/null
-  else
-    git -C "$WORKTREE" branch "$MAIN_BRANCH" "origin/$MAIN_BRANCH" >/dev/null
-  fi
+  BASE_REF="$REMOTE_MAIN_REF"
+  BASE_LABEL="origin/$MAIN_BRANCH"
 elif git -C "$WORKTREE" show-ref --verify --quiet "$LOCAL_MAIN_REF"; then
+  BASE_REF="$LOCAL_MAIN_REF"
+  BASE_LABEL="$MAIN_BRANCH"
   echo "[parallel-agent-start] origin/$MAIN_BRANCH missing; using local $MAIN_BRANCH as fallback."
 else
   echo "[parallel-agent-start] ERROR: missing both origin/$MAIN_BRANCH and local $MAIN_BRANCH."
@@ -93,9 +93,9 @@ if [[ "$BRANCH" == "$MAIN_BRANCH" ]]; then
   exit 1
 fi
 
-echo "[parallel-agent-start] Resetting $BRANCH to $MAIN_BRANCH."
+echo "[parallel-agent-start] Resetting $BRANCH to $BASE_LABEL."
 git -C "$WORKTREE" checkout "$BRANCH" >/dev/null 2>&1
-git -C "$WORKTREE" reset --hard "$MAIN_BRANCH" >/dev/null
+git -C "$WORKTREE" reset --hard "$BASE_REF" >/dev/null
 ```
 
 - If the user wants **no custom bootstrap**: append the optional hook block:
