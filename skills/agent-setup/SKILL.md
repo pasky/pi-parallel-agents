@@ -189,7 +189,7 @@ while true; do
   (
     cd "$PARENT_ROOT" || exit 1
     git checkout "$MAIN_BRANCH" >/dev/null 2>&1 || exit 1
-    git merge --no-ff --no-edit "$BRANCH"
+    git merge --no-edit "$BRANCH"
   )
   merge_status=$?
   set -e

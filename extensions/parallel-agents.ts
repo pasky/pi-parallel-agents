@@ -860,6 +860,7 @@ EXIT_FILE=${shellQuote(params.exitFile)}
 MODEL_SPEC=${shellQuote(params.modelSpec ?? "")}
 RUNTIME_DIR=${shellQuote(params.runtimeDir)}
 START_SCRIPT=\"$WORKTREE/.pi/parallel-agent-start.sh\"
+CHILD_SKILLS_DIR=\"$WORKTREE/.pi/parallel-agent-skills\"
 
 export ${ENV_AGENT_ID}=\"$AGENT_ID\"
 export ${ENV_PARENT_SESSION}=\"$PARENT_SESSION\"
@@ -892,6 +893,10 @@ fi
 PI_CMD=(pi)
 if [[ -n "$MODEL_SPEC" ]]; then
   PI_CMD+=(--model "$MODEL_SPEC")
+fi
+if [[ -d "$CHILD_SKILLS_DIR" ]]; then
+  # agent-setup writes the child-only finish skill here; load it explicitly.
+  PI_CMD+=(--skill "$CHILD_SKILLS_DIR")
 fi
 
 set +e

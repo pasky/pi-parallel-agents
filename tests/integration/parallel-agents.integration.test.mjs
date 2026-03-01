@@ -654,6 +654,12 @@ test(
 			assert.ok(await exists(join(runtimeDir, fileName)), `runtime file missing: ${fileName}`);
 		}
 
+		const launchScript = await readFile(join(runtimeDir, "launch.sh"), "utf8");
+		assert.ok(
+			launchScript.includes("--skill") && launchScript.includes(".pi/parallel-agent-skills"),
+			"child launch script should load .pi/parallel-agent-skills via --skill so finish is discoverable",
+		);
+
 		const linked = await waitFor(
 			"child session link in registry",
 			async () => {
@@ -924,7 +930,8 @@ while true; do
   (
     cd "$PARENT_ROOT" || exit 1
     git checkout "$MAIN_BRANCH" >/dev/null 2>&1 || exit 1
-    git merge --no-ff --no-edit "$BRANCH"
+    sleep 2
+    git merge --no-edit "$BRANCH"
   )
   merge_status=$?
   set -e
@@ -950,9 +957,6 @@ done
 	);
 	await chmod(finishScriptPath, 0o755);
 
-	const preMergeHook = join(repoRoot, ".git", "hooks", "pre-merge-commit");
-	await writeFile(preMergeHook, "#!/usr/bin/env bash\nsleep 2\n");
-	await chmod(preMergeHook, 0o755);
 
 	run("git", ["worktree", "add", "-B", "parallel-agent/a-0001", wt1, "main"], { cwd: repoRoot });
 	run("git", ["worktree", "add", "-B", "parallel-agent/a-0002", wt2, "main"], { cwd: repoRoot });
