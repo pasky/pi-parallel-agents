@@ -157,6 +157,53 @@ async function cleanupWorktreeLockBestEffort(worktreePath) {
 	await rm(lockPath, { force: true }).catch(() => {});
 }
 
+/**
+ * Re-implementation of status-transition collection used by status polling.
+ * Returns the next snapshot map and the transitions that should be emitted.
+ *
+ * @param {Map<string, { status: string, tmuxWindowIndex?: number }> | undefined} previous
+ * @param {Array<{ id: string, status: string, tmuxWindowIndex?: number }>} agents
+ */
+function collectStatusTransitions(previous, agents) {
+	const next = new Map();
+	const transitions = [];
+
+	for (const record of agents) {
+		const current = {
+			status: record.status,
+			tmuxWindowIndex: record.tmuxWindowIndex,
+		};
+		next.set(record.id, current);
+
+		const prev = previous?.get(record.id);
+		if (!prev || prev.status === record.status) continue;
+		transitions.push({
+			id: record.id,
+			fromStatus: prev.status,
+			toStatus: record.status,
+			tmuxWindowIndex: record.tmuxWindowIndex ?? prev.tmuxWindowIndex,
+		});
+	}
+
+	if (previous) {
+		for (const [id, prev] of previous.entries()) {
+			if (next.has(id)) continue;
+			if (isTerminalStatus(prev.status)) continue;
+			transitions.push({
+				id,
+				fromStatus: prev.status,
+				toStatus: "done",
+				tmuxWindowIndex: prev.tmuxWindowIndex,
+			});
+		}
+	}
+
+	return {
+		next,
+		transitions: previous ? transitions.sort((a, b) => a.id.localeCompare(b.id)) : [],
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Helper: temporary registry factory
 // ---------------------------------------------------------------------------
@@ -238,6 +285,58 @@ test("summarizeTask — collapses whitespace and truncates", () => {
 	assert.ok(!summary.includes("\n"), "summary should be single-line");
 	assert.ok(summary.length <= 120, `summary too long: ${summary.length}`);
 	assert.ok(summary.endsWith("…"), "summary should be truncated with ellipsis");
+});
+
+test("collectStatusTransitions — first snapshot emits no transitions", () => {
+	const { next, transitions } = collectStatusTransitions(undefined, [
+		{ id: "alpha", status: "running", tmuxWindowIndex: 7 },
+	]);
+
+	assert.equal(next.get("alpha")?.status, "running");
+	assert.equal(next.get("alpha")?.tmuxWindowIndex, 7);
+	assert.deepEqual(transitions, []);
+});
+
+test("collectStatusTransitions — changed status emits transition with tmux fallback", () => {
+	const previous = new Map([
+		["alpha", { status: "running", tmuxWindowIndex: 17 }],
+	]);
+
+	const { transitions } = collectStatusTransitions(previous, [{ id: "alpha", status: "waiting_user" }]);
+	assert.deepEqual(transitions, [
+		{
+			id: "alpha",
+			fromStatus: "running",
+			toStatus: "waiting_user",
+			tmuxWindowIndex: 17,
+		},
+	]);
+});
+
+test("collectStatusTransitions — removed non-terminal agent emits synthetic -> done transition", () => {
+	const previous = new Map([
+		["alpha", { status: "waiting_user", tmuxWindowIndex: 17 }],
+	]);
+
+	const { transitions } = collectStatusTransitions(previous, []);
+	assert.deepEqual(transitions, [
+		{
+			id: "alpha",
+			fromStatus: "waiting_user",
+			toStatus: "done",
+			tmuxWindowIndex: 17,
+		},
+	]);
+});
+
+test("collectStatusTransitions — removed terminal agent does not emit synthetic done", () => {
+	const previous = new Map([
+		["failed-agent", { status: "failed", tmuxWindowIndex: 3 }],
+		["crashed-agent", { status: "crashed", tmuxWindowIndex: 4 }],
+	]);
+
+	const { transitions } = collectStatusTransitions(previous, []);
+	assert.deepEqual(transitions, []);
 });
 
 test("cleanupWorktreeLockBestEffort — removes existing lock and remains idempotent", async (t) => {

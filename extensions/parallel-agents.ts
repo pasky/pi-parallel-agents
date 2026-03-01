@@ -128,11 +128,16 @@ type StatusTransitionNotice = {
 	tmuxWindowIndex?: number;
 };
 
+type AgentStatusSnapshot = {
+	status: AgentStatus;
+	tmuxWindowIndex?: number;
+};
+
 let statusPollTimer: NodeJS.Timeout | undefined;
 let statusPollContext: ExtensionContext | undefined;
 let statusPollApi: ExtensionAPI | undefined;
 let statusPollInFlight = false;
-const statusSnapshotsByStateRoot = new Map<string, Map<string, AgentStatus>>();
+const statusSnapshotsByStateRoot = new Map<string, Map<string, AgentStatusSnapshot>>();
 let lastRenderedStatusLine: string | undefined;
 
 function nowIso() {
@@ -1705,37 +1710,42 @@ function isChildRuntime(): boolean {
 
 function collectStatusTransitions(stateRoot: string, agents: AgentRecord[]): StatusTransitionNotice[] {
 	const previous = statusSnapshotsByStateRoot.get(stateRoot);
-	const next = new Map<string, AgentStatus>();
+	const next = new Map<string, AgentStatusSnapshot>();
 	const transitions: StatusTransitionNotice[] = [];
 
 	for (const record of agents) {
-		next.set(record.id, record.status);
-		const previousStatus = previous?.get(record.id);
-		if (!previousStatus || previousStatus === record.status) continue;
+		const currentSnapshot: AgentStatusSnapshot = {
+			status: record.status,
+			tmuxWindowIndex: record.tmuxWindowIndex,
+		};
+		next.set(record.id, currentSnapshot);
+
+		const previousSnapshot = previous?.get(record.id);
+		if (!previousSnapshot || previousSnapshot.status === record.status) continue;
 		transitions.push({
 			id: record.id,
-			fromStatus: previousStatus,
+			fromStatus: previousSnapshot.status,
 			toStatus: record.status,
-			tmuxWindowIndex: record.tmuxWindowIndex,
+			tmuxWindowIndex: record.tmuxWindowIndex ?? previousSnapshot.tmuxWindowIndex,
 		});
+	}
+
+	if (previous) {
+		for (const [agentId, previousSnapshot] of previous.entries()) {
+			if (next.has(agentId)) continue;
+			if (isTerminalStatus(previousSnapshot.status)) continue;
+			transitions.push({
+				id: agentId,
+				fromStatus: previousSnapshot.status,
+				toStatus: "done",
+				tmuxWindowIndex: previousSnapshot.tmuxWindowIndex,
+			});
+		}
 	}
 
 	statusSnapshotsByStateRoot.set(stateRoot, next);
 	if (!previous) return [];
-	return transitions;
-}
-
-function transitionNotifyLevel(status: AgentStatus): "info" | "warning" | "error" {
-	switch (status) {
-		case "failed":
-		case "crashed":
-			return "error";
-		case "waiting_merge_lock":
-		case "retrying_reconcile":
-			return "warning";
-		default:
-			return "info";
-	}
+	return transitions.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function formatStatusTransitionMessage(transition: StatusTransitionNotice): string {
@@ -1748,14 +1758,11 @@ function emitStatusTransitions(pi: ExtensionAPI, ctx: ExtensionContext, transiti
 
 	for (const transition of transitions) {
 		const message = formatStatusTransitionMessage(transition);
-		if (ctx.hasUI) {
-			ctx.ui.notify(message, transitionNotifyLevel(transition.toStatus));
-		}
 		pi.sendMessage(
 			{
 				customType: STATUS_UPDATE_MESSAGE_TYPE,
 				content: message,
-				display: false,
+				display: true,
 				details: {
 					agentId: transition.id,
 					fromStatus: transition.fromStatus,
@@ -1764,8 +1771,15 @@ function emitStatusTransitions(pi: ExtensionAPI, ctx: ExtensionContext, transiti
 					emittedAt: Date.now(),
 				},
 			},
-			{ triggerTurn: false },
+			{
+				triggerTurn: false,
+				deliverAs: "followUp",
+			},
 		);
+
+		if (ctx.hasUI && (transition.toStatus === "failed" || transition.toStatus === "crashed")) {
+			ctx.ui.notify(message, "error");
+		}
 	}
 }
 

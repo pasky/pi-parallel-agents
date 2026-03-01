@@ -13,7 +13,7 @@ Keep your main coding flow unblocked by offloading side quests (questions, hotfi
 - Worktree lock diagnostics (warn on locked worktrees not tracked in registry)
 - Shared registry at `.pi/parallel-agents/registry.json`
 - Statusline summary of active agents in project sessions
-- Parent-side agent state-change notifications (`ctx.ui.notify`) plus hidden `parallel-agent-status` custom messages for LLM context (without auto-triggering turns)
+- Parent-side agent state-change feed as append-only `parallel-agent-status` messages in session history (plus error toasts for failed/crashed transitions)
 - Agent control tools (tool-only; no `/agent-check` or `/agent-send` slash commands):
   - `agent-start`
   - `agent-check`
