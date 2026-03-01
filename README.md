@@ -86,7 +86,7 @@ After review, parent/user asks the child to wrap up (finish flow), then quits it
 
 Inspect the current status and recent output of an agent.
 
-`agent.task` is a compact preview; `backlog` is ANSI-stripped + truncated for safe LLM context usage.
+`agent.task` is a compact preview; `backlog` is ANSI-stripped + truncated for safe LLM context usage, and includes synthetic `[parallel-agent][status] ... old -> new` notices for parent-observed lifecycle transitions.
 
 **Input**: `{ "id": "a-0001" }`
 
