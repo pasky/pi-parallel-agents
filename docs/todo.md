@@ -1,4 +1,4 @@
-# pi-parallel-agents implementation TODO
+# pi-side-agents implementation TODO
 
 ## Current decisions
 
@@ -12,7 +12,7 @@
 ## Phase 0 — Foundation
 
 - [x] Create project structure (`extensions/`, `docs/`, script template scaffolder via `/agent-setup`).
-- [ ] Define config file shape (`.pi/parallel-agents/config.json` or equivalent).
+- [ ] Define config file shape (`.pi/side-agents/config.json` or equivalent).
 - [x] Add typed models for Agent, WorktreeSlot, RegistryState.
 - [ ] Add logging helpers and error taxonomy.
 
@@ -40,11 +40,11 @@
 
 ## Phase 3 — Child lifecycle scripts + finish skill
 
-- [x] Scaffold `.pi/parallel-agent-start.sh`.
+- [x] Scaffold `.pi/side-agent-start.sh`.
 - [ ] Enforce branch/head sync policy in start script (currently lightweight bootstrap hook only).
 - [x] Resync `.pi` and run dependency/bootstrap hook surface.
-- [x] Scaffold `.pi/parallel-agent-skills/finish/SKILL.md`.
-- [x] Implement `.pi/parallel-agent-finish.sh` for deterministic rebase + fast-forward loop baseline.
+- [x] Scaffold `.pi/side-agent-skills/finish/SKILL.md`.
+- [x] Implement `.pi/side-agent-finish.sh` for deterministic rebase + fast-forward loop baseline.
 
 **Exit criteria**: scaffolded and functional baseline; policy hardening still needed.
 

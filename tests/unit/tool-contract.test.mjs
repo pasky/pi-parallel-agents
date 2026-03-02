@@ -1,10 +1,10 @@
 /**
- * Tool contract unit tests for pi-parallel-agents.
+ * Tool contract unit tests for pi-side-agents.
  *
  * These tests validate the JSON-shape contracts and pure-function behavior of
  * the agent control tools without requiring a live Pi process, real tmux, or
  * real git worktrees.  They complement the full integration suite at
- * tests/integration/parallel-agents.integration.test.mjs.
+ * tests/integration/side-agents.integration.test.mjs.
  *
  * Tests are grouped by tool / concern:
  *   1. Pure helper functions (ported to JS for direct testing)
@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Minimal JS re-implementations of pure extension functions
-// (kept in sync with extensions/parallel-agents.ts by contract)
+// (kept in sync with extensions/side-agents.ts by contract)
 // ---------------------------------------------------------------------------
 
 /** @param {string} status */
@@ -87,7 +87,7 @@ function sanitizeBacklogLines(lines, lineMax = 240, totalMax = 2400) {
 
 /**
  * Minimal re-implementation of waitForAny fail-fast path.
- * Reads a registry JSON at stateRoot/.pi/parallel-agents/registry.json.
+ * Reads a registry JSON at stateRoot/.pi/side-agents/registry.json.
  *
  * Returns { ok: false, error } immediately when all IDs are unknown on the
  * first poll cycle. Resolves with the matching agent payload when one reaches
@@ -111,7 +111,7 @@ async function waitForAnyFirstPass(stateRoot, ids) {
 
 	const waitStates = new Set(["waiting_user", "failed", "crashed"]);
 
-	const registryPath = join(stateRoot, ".pi", "parallel-agents", "registry.json");
+	const registryPath = join(stateRoot, ".pi", "side-agents", "registry.json");
 	let registry = { agents: {} };
 	try {
 		registry = JSON.parse(await readFile(registryPath, "utf8"));
@@ -209,10 +209,10 @@ function collectStatusTransitions(previous, agents) {
 // ---------------------------------------------------------------------------
 
 async function makeTempRegistry(t, agents = {}) {
-	const dir = await mkdtemp(join(tmpdir(), "pi-parallel-unit-"));
+	const dir = await mkdtemp(join(tmpdir(), "pi-side-unit-"));
 	t.after(() => rm(dir, { recursive: true, force: true }));
 
-	const metaDir = join(dir, ".pi", "parallel-agents");
+	const metaDir = join(dir, ".pi", "side-agents");
 	await mkdir(metaDir, { recursive: true });
 
 	const registry = { version: 1, agents };
@@ -340,7 +340,7 @@ test("collectStatusTransitions — removed terminal agent does not emit syntheti
 });
 
 test("cleanupWorktreeLockBestEffort — removes existing lock and remains idempotent", async (t) => {
-	const dir = await mkdtemp(join(tmpdir(), "pi-parallel-lock-"));
+	const dir = await mkdtemp(join(tmpdir(), "pi-side-lock-"));
 	t.after(() => rm(dir, { recursive: true, force: true }));
 
 	const worktreePath = join(dir, "wt-0001");
@@ -362,7 +362,7 @@ test("cleanupWorktreeLockBestEffort — removes existing lock and remains idempo
 });
 
 test("cleanupWorktreeLockBestEffort — missing path and missing lock never throw", async (t) => {
-	const dir = await mkdtemp(join(tmpdir(), "pi-parallel-lock-"));
+	const dir = await mkdtemp(join(tmpdir(), "pi-side-lock-"));
 	t.after(() => rm(dir, { recursive: true, force: true }));
 
 	await assert.doesNotReject(() => cleanupWorktreeLockBestEffort(undefined));
@@ -382,7 +382,7 @@ test("agent-start success shape must include ok: true", () => {
 		tmuxWindowId: "@5",
 		tmuxWindowIndex: 5,
 		worktreePath: "/tmp/repo-agent-worktree-0001",
-		branch: "parallel-agent/a-0001",
+		branch: "side-agent/a-0001",
 		warnings: [],
 	};
 
@@ -410,7 +410,7 @@ test("agent-check success shape", () => {
 			tmuxWindowId: "@5",
 			tmuxWindowIndex: 5,
 			worktreePath: "/tmp/repo-agent-worktree-0001",
-			branch: "parallel-agent/a-0001",
+			branch: "side-agent/a-0001",
 			task: "refactor auth module",
 			startedAt: "2026-01-01T00:00:00.000Z",
 			finishedAt: undefined,
@@ -602,7 +602,7 @@ test("agent-send '/' prefix is forwarded verbatim (no special parse)", () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Slug generation helpers (kept in sync with extensions/parallel-agents.ts)
+// Slug generation helpers (kept in sync with extensions/side-agents.ts)
 // ---------------------------------------------------------------------------
 
 function sanitizeSlug(raw) {
@@ -675,13 +675,13 @@ test("deduplicateSlug — appends suffix on collision", () => {
 	assert.strictEqual(deduplicateSlug("fix-auth", new Set(["fix-auth", "fix-auth-2"])), "fix-auth-3");
 });
 
-test("agent branch name follows parallel-agent/<slug> convention", () => {
+test("agent branch name follows side-agent/<slug> convention", () => {
 	function branchForId(id) {
-		return `parallel-agent/${id}`;
+		return `side-agent/${id}`;
 	}
 
-	assert.strictEqual(branchForId("fix-auth-leak"), "parallel-agent/fix-auth-leak");
-	assert.strictEqual(branchForId("add-retry"), "parallel-agent/add-retry");
+	assert.strictEqual(branchForId("fix-auth-leak"), "side-agent/fix-auth-leak");
+	assert.strictEqual(branchForId("add-retry"), "side-agent/add-retry");
 
 	// Branch must not start with a slash or dot
 	const branch = branchForId("fix-auth-leak");

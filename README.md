@@ -1,4 +1,4 @@
-# pi-parallel-agents
+# pi-side-agents
 
 **Code in sprints** (using agents *asynchronously*), **not in a marathon** (*synchronous* task-by-task flow).
 
@@ -14,7 +14,7 @@ This extension automates the full tmux/worktree/merge lifecycle for you. Paralle
 - Adds `/agents` to inspect current agents and clean up stale state.
 - Shows active-agent summary with tmux window numbers in the statusline.
 - Includes `agent-setup` skill to scaffold project-specific lifecycle scripts.
-- Tracks runtime state in `.pi/parallel-agents/registry.json`.
+- Tracks runtime state in `.pi/side-agents/registry.json`.
 - Exposes orchestration tools for parent agents:
   - `agent-start`
   - `agent-check`
@@ -36,7 +36,7 @@ This extension automates the full tmux/worktree/merge lifecycle for you. Paralle
 4. If an agent is done, review its work and once happy, confirm by **LGTM, merge**.
    - Recommended: Write `commit your work when done` in your `AGENTS.md`. (You can always tell the agent to amend.)
    - Quickest way to review: ctrl+z, `git show`, `fg` to go back to the baby agent's Pi.
-   - Your main worktree should be clean at this point; avoid editing in the main tree while parallel agents are active.
+   - Your main worktree should be clean at this point; avoid editing in the main tree while side agents are active.
    - You can also tell your Pi to open GitHub PRs instead of merging locally, if that's what you prefer.
 5. The agent will merge its work into your main repo. **Just type `/quit` and move on.**
    - Old worktrees are kept around and reused and updated by new agents.

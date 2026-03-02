@@ -20,10 +20,10 @@ import { basename, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const PROJECT_ROOT = resolve(process.cwd());
-const EXTENSION_SOURCE = resolve(PROJECT_ROOT, "extensions/parallel-agents.ts");
-const MODEL_SPEC = process.env.PI_PARALLEL_IT_MODEL ?? "openai-codex/gpt-5.1-codex-mini";
+const EXTENSION_SOURCE = resolve(PROJECT_ROOT, "extensions/side-agents.ts");
+const MODEL_SPEC = process.env.PI_SIDE_IT_MODEL ?? "openai-codex/gpt-5.1-codex-mini";
 const AUTH_SOURCE = join(homedir(), ".pi", "agent", "auth.json");
-const TEST_TIMEOUT = Number(process.env.PI_PARALLEL_IT_TIMEOUT_MS ?? 240_000);
+const TEST_TIMEOUT = Number(process.env.PI_SIDE_IT_TIMEOUT_MS ?? 240_000);
 
 let authReady = false;
 let piShimCleanup = async () => {};
@@ -172,7 +172,7 @@ async function sendParentCommand(harness, command) {
 }
 
 async function readRegistry(harness) {
-	const registryPath = join(harness.repoRoot, ".pi", "parallel-agents", "registry.json");
+	const registryPath = join(harness.repoRoot, ".pi", "side-agents", "registry.json");
 	if (!(await exists(registryPath))) {
 		return { version: 1, agents: {} };
 	}
@@ -253,7 +253,7 @@ function windowExists(harness, windowId) {
 }
 
 async function waitForBacklogContains(harness, agentId, needle, timeoutMs = 90_000) {
-	const backlogPath = join(harness.repoRoot, ".pi", "parallel-agents", "runtime", agentId, "backlog.log");
+	const backlogPath = join(harness.repoRoot, ".pi", "side-agents", "runtime", agentId, "backlog.log");
 	return waitFor(
 		`backlog for ${agentId} to contain ${needle}`,
 		async () => {
@@ -433,7 +433,7 @@ async function callAgentSendTool(harness, id, prompt, timeoutMs = 90_000) {
 }
 
 async function readWindowIdFromLaunchScript(harness, agentId) {
-	const launchPath = join(harness.repoRoot, ".pi", "parallel-agents", "runtime", agentId, "launch.sh");
+	const launchPath = join(harness.repoRoot, ".pi", "side-agents", "runtime", agentId, "launch.sh");
 	if (!(await exists(launchPath))) return undefined;
 	const raw = await readFile(launchPath, "utf8").catch(() => "");
 	const match = raw.match(/(?:^|\n)WINDOW_ID=(?:'([^']+)'|"([^"]+)"|([^\s\n]+))/);
@@ -522,7 +522,7 @@ async function closeChildWindowAfterPrompt(harness, agentId, windowIdHint) {
 }
 
 async function createHarness(t, options = {}) {
-	const rootDir = await mkdtemp(join(tmpdir(), "pi-parallel-it-"));
+	const rootDir = await mkdtemp(join(tmpdir(), "pi-side-it-"));
 	const repoRoot = join(rootDir, "repo");
 	const agentDir = join(rootDir, "agent-dir");
 	const parentSessionDir = join(rootDir, "sessions");
@@ -541,7 +541,7 @@ async function createHarness(t, options = {}) {
 
 	await mkdir(join(repoRoot, ".pi", "extensions"), { recursive: true });
 	await writeFile(
-		join(repoRoot, ".pi", "extensions", "parallel-agents.ts"),
+		join(repoRoot, ".pi", "extensions", "side-agents.ts"),
 		`export { default } from ${JSON.stringify(EXTENSION_SOURCE)};\n`,
 	);
 	await writeFile(join(repoRoot, "README.md"), "# integration fixture\n");
@@ -551,14 +551,14 @@ async function createHarness(t, options = {}) {
 
 	if (options.lockedParallelAgentSlot) {
 		const occupiedSlotPath = join(rootDir, `${basename(repoRoot)}-agent-worktree-0001`);
-		run("git", ["worktree", "add", "-B", "parallel-agent/a-0001", occupiedSlotPath, "main"], { cwd: repoRoot });
+		run("git", ["worktree", "add", "-B", "side-agent/a-0001", occupiedSlotPath, "main"], { cwd: repoRoot });
 		await mkdir(join(occupiedSlotPath, ".pi"), { recursive: true });
 		await writeFile(
 			join(occupiedSlotPath, ".pi", "active.lock"),
 			JSON.stringify({
 				agentId: "a-0001",
 				pid: 123456,
-				branch: "parallel-agent/a-0001",
+				branch: "side-agent/a-0001",
 				startedAt: new Date().toISOString(),
 			}) + "\n",
 		);
@@ -572,7 +572,7 @@ async function createHarness(t, options = {}) {
 			JSON.stringify({
 				agentId: "orphan-9999",
 				pid: 123456,
-				branch: "parallel-agent/orphan-9999",
+				branch: "side-agent/orphan-9999",
 				startedAt: new Date().toISOString(),
 			}) + "\n",
 		);
@@ -607,7 +607,7 @@ exec pi --model ${JSON.stringify(MODEL_SPEC)} --thinking minimal --session-dir $
 	const env = {
 		...process.env,
 		PI_CODING_AGENT_DIR: agentDir,
-		PI_PARALLEL_AGENTS_ROOT: repoRoot,
+		PI_SIDE_AGENTS_ROOT: repoRoot,
 		PI_OFFLINE: "1",
 	};
 
@@ -636,7 +636,7 @@ exec pi --model ${JSON.stringify(MODEL_SPEC)} --thinking minimal --session-dir $
 		"parent pi startup",
 		async () => {
 			const pane = normalizeScreen(await captureParent(harness));
-			return pane.includes("/ for commands") && pane.includes("parallel-agents.ts");
+			return pane.includes("/ for commands") && pane.includes("side-agents.ts");
 		},
 		{ timeoutMs: 90_000, intervalMs: 300 },
 	);
@@ -698,24 +698,24 @@ test(
 
 		await sendParentCommand(harness, `/agent -model ${MODEL_SPEC} integration scenario one`);
 		const started = await waitForSpawnedAgent(harness, "a-0001");
-		await waitForParentContains(harness, "parallel-agent started", 45_000);
+		await waitForParentContains(harness, "side-agent started", 45_000);
 		await waitForParentContains(harness, "prompt:", 45_000);
 
-		assert.equal(started.branch, "parallel-agent/a-0001");
+		assert.equal(started.branch, "side-agent/a-0001");
 		assert.ok(started.worktreePath, "worktreePath should be recorded");
 		assert.ok(await exists(started.worktreePath), "worktree directory should exist");
 
-		const runtimeDir = join(harness.repoRoot, ".pi", "parallel-agents", "runtime", "a-0001");
+		const runtimeDir = join(harness.repoRoot, ".pi", "side-agents", "runtime", "a-0001");
 		for (const fileName of ["kickoff.md", "backlog.log", "launch.sh"]) {
 			assert.ok(await exists(join(runtimeDir, fileName)), `runtime file missing: ${fileName}`);
 		}
-		await waitForBacklogContains(harness, "a-0001", "[parallel-agent][prompt]", 60_000);
+		await waitForBacklogContains(harness, "a-0001", "[side-agent][prompt]", 60_000);
 		await waitForBacklogContains(harness, "a-0001", "integration scenario one", 60_000);
 
 		const launchScript = await readFile(join(runtimeDir, "launch.sh"), "utf8");
 		assert.ok(
-			launchScript.includes("--skill") && launchScript.includes(".pi/parallel-agent-skills"),
-			"child launch script should load .pi/parallel-agent-skills via --skill so finish is discoverable",
+			launchScript.includes("--skill") && launchScript.includes(".pi/side-agent-skills"),
+			"child launch script should load .pi/side-agent-skills via --skill so finish is discoverable",
 		);
 
 		const linked = await waitFor(
@@ -737,7 +737,7 @@ test(
 			{ timeoutMs: 90_000, intervalMs: 300 },
 		);
 		assert.equal(lock.agentId, "a-0001");
-		assert.equal(lock.branch, "parallel-agent/a-0001");
+		assert.equal(lock.branch, "side-agent/a-0001");
 		assert.equal(lock.tmuxWindowId, started.tmuxWindowId);
 
 		await waitForParentContains(harness, "a-0001:", 45_000);
@@ -783,7 +783,7 @@ test(
 );
 
 test(
-	"integration: next agent id skips checked-out parallel-agent branch in a stale locked slot",
+	"integration: next agent id skips checked-out side-agent branch in a stale locked slot",
 	{ timeout: TEST_TIMEOUT },
 	async (t) => {
 		if (!assertAuthOrSkip(t)) return;
@@ -793,7 +793,7 @@ test(
 		await sendParentCommand(harness, `/agent -model ${MODEL_SPEC} branch collision regression`);
 		const started = await waitForSpawnedAgent(harness, "a-0002", 180_000);
 
-		assert.equal(started.branch, "parallel-agent/a-0002");
+		assert.equal(started.branch, "side-agent/a-0002");
 		assert.ok(started.worktreePath.endsWith("0002"), `expected slot 0002, got ${started.worktreePath}`);
 		assert.ok(
 			(started.warnings ?? []).some((warning) => warning.includes("Locked worktree is not tracked in registry")),
@@ -906,7 +906,7 @@ test(
 );
 
 test("integration: merge-lock serialization in finish script", { timeout: TEST_TIMEOUT }, async (t) => {
-	const rootDir = await mkdtemp(join(tmpdir(), "pi-parallel-merge-it-"));
+	const rootDir = await mkdtemp(join(tmpdir(), "pi-side-merge-it-"));
 	const repoRoot = join(rootDir, "repo");
 	const wt1 = join(rootDir, "worktree-a1");
 	const wt2 = join(rootDir, "worktree-a2");
@@ -925,28 +925,28 @@ test("integration: merge-lock serialization in finish script", { timeout: TEST_T
 	run("git", ["commit", "-m", "initial"], { cwd: repoRoot });
 
 	await mkdir(join(repoRoot, ".pi"), { recursive: true });
-	const finishScriptPath = join(repoRoot, ".pi", "parallel-agent-finish.sh");
+	const finishScriptPath = join(repoRoot, ".pi", "side-agent-finish.sh");
 	await writeFile(
 		finishScriptPath,
 		`#!/usr/bin/env bash
 set -euo pipefail
 
-PARENT_ROOT="\${PI_PARALLEL_PARENT_REPO:-\${1:-}}"
-AGENT_ID="\${PI_PARALLEL_AGENT_ID:-\${2:-unknown}}"
+PARENT_ROOT="\${PI_SIDE_PARENT_REPO:-\${1:-}}"
+AGENT_ID="\${PI_SIDE_AGENT_ID:-\${2:-unknown}}"
 MAIN_BRANCH="main"
 BRANCH="$(git branch --show-current)"
 
 if [[ -z "$PARENT_ROOT" ]]; then
-  echo "[parallel-agent-finish] Missing parent checkout path."
+  echo "[side-agent-finish] Missing parent checkout path."
   exit 1
 fi
 
 if [[ -z "$BRANCH" ]]; then
-  echo "[parallel-agent-finish] Could not determine current branch."
+  echo "[side-agent-finish] Could not determine current branch."
   exit 1
 fi
 
-LOCK_DIR="$PARENT_ROOT/.pi/parallel-agents"
+LOCK_DIR="$PARENT_ROOT/.pi/side-agents"
 LOCK_FILE="$LOCK_DIR/merge.lock"
 mkdir -p "$LOCK_DIR"
 
@@ -962,11 +962,11 @@ acquire_lock() {
     fi
     elapsed=$(( $(date +%s) - started ))
     if [[ "$elapsed" -ge "$MERGE_LOCK_TIMEOUT" ]]; then
-      echo "[parallel-agent-finish] Timed out after \${MERGE_LOCK_TIMEOUT}s waiting for merge lock."
-      echo "[parallel-agent-finish] Stale lock? Inspect: $LOCK_FILE"
+      echo "[side-agent-finish] Timed out after \${MERGE_LOCK_TIMEOUT}s waiting for merge lock."
+      echo "[side-agent-finish] Stale lock? Inspect: $LOCK_FILE"
       exit 3
     fi
-    echo "[parallel-agent-finish] Waiting for merge lock... (\${elapsed}s / \${MERGE_LOCK_TIMEOUT}s)"
+    echo "[side-agent-finish] Waiting for merge lock... (\${elapsed}s / \${MERGE_LOCK_TIMEOUT}s)"
     sleep 1
   done
 }
@@ -978,9 +978,9 @@ release_lock() {
 trap 'release_lock' EXIT
 
 while true; do
-  echo "[parallel-agent-finish] Reconciling child branch: git rebase $MAIN_BRANCH"
+  echo "[side-agent-finish] Reconciling child branch: git rebase $MAIN_BRANCH"
   if ! git rebase "$MAIN_BRANCH"; then
-    echo "[parallel-agent-finish] Conflict while rebasing $BRANCH onto $MAIN_BRANCH."
+    echo "[side-agent-finish] Conflict while rebasing $BRANCH onto $MAIN_BRANCH."
     exit 2
   fi
 
@@ -999,13 +999,13 @@ while true; do
   release_lock
 
   if [[ "$merge_status" -eq 0 ]]; then
-    echo "[parallel-agent-finish] Success: fast-forwarded $MAIN_BRANCH to include $BRANCH in parent checkout."
+    echo "[side-agent-finish] Success: fast-forwarded $MAIN_BRANCH to include $BRANCH in parent checkout."
     rm -f "$(pwd)/.pi/active.lock" || true
     exit 0
   fi
 
-  echo "[parallel-agent-finish] Parent fast-forward failed (likely $MAIN_BRANCH moved)."
-  echo "[parallel-agent-finish] Retrying rebase reconcile loop..."
+  echo "[side-agent-finish] Parent fast-forward failed (likely $MAIN_BRANCH moved)."
+  echo "[side-agent-finish] Retrying rebase reconcile loop..."
 
   sleep 1
 done
@@ -1014,8 +1014,8 @@ done
 	await chmod(finishScriptPath, 0o755);
 
 
-	run("git", ["worktree", "add", "-B", "parallel-agent/a-0001", wt1, "main"], { cwd: repoRoot });
-	run("git", ["worktree", "add", "-B", "parallel-agent/a-0002", wt2, "main"], { cwd: repoRoot });
+	run("git", ["worktree", "add", "-B", "side-agent/a-0001", wt1, "main"], { cwd: repoRoot });
+	run("git", ["worktree", "add", "-B", "side-agent/a-0002", wt2, "main"], { cwd: repoRoot });
 
 	await writeFile(join(wt1, "from-agent-1.txt"), "agent one\n");
 	run("git", ["add", "from-agent-1.txt"], { cwd: wt1 });
@@ -1025,10 +1025,10 @@ done
 	run("git", ["add", "from-agent-2.txt"], { cwd: wt2 });
 	run("git", ["commit", "-m", "agent two change"], { cwd: wt2 });
 
-	const baseEnv = { ...process.env, PI_PARALLEL_PARENT_REPO: repoRoot };
+	const baseEnv = { ...process.env, PI_SIDE_PARENT_REPO: repoRoot };
 	const firstPromise = spawnWithCapture("bash", [finishScriptPath], {
 		cwd: wt1,
-		env: { ...baseEnv, PI_PARALLEL_AGENT_ID: "a-0001" },
+		env: { ...baseEnv, PI_SIDE_AGENT_ID: "a-0001" },
 		timeoutMs: 180_000,
 	});
 
@@ -1036,7 +1036,7 @@ done
 
 	const secondPromise = spawnWithCapture("bash", [finishScriptPath], {
 		cwd: wt2,
-		env: { ...baseEnv, PI_PARALLEL_AGENT_ID: "a-0002" },
+		env: { ...baseEnv, PI_SIDE_AGENT_ID: "a-0002" },
 		timeoutMs: 180_000,
 	});
 
@@ -1051,7 +1051,7 @@ done
 		`expected lock wait message in outputs:\n--- first ---\n${firstResult.stdout}\n--- second ---\n${secondResult.stdout}`,
 	);
 
-	assert.equal(await exists(join(repoRoot, ".pi", "parallel-agents", "merge.lock")), false, "merge.lock should be released");
+	assert.equal(await exists(join(repoRoot, ".pi", "side-agents", "merge.lock")), false, "merge.lock should be released");
 
 	const tree = run("git", ["-C", repoRoot, "ls-tree", "--name-only", "-r", "main"]).stdout;
 	assert.ok(tree.includes("from-agent-1.txt"), "main should contain agent-1 change");
@@ -1118,7 +1118,7 @@ test(
 
 		const checkedAgent = knownCheck.payload.agent;
 		assert.equal(checkedAgent.id, "a-0001");
-		assert.equal(checkedAgent.branch, "parallel-agent/a-0001");
+		assert.equal(checkedAgent.branch, "side-agent/a-0001");
 		assert.ok(typeof checkedAgent.status === "string", "agent.status should be present");
 		assert.ok(typeof checkedAgent.task === "string", "agent.task should be present");
 		assert.ok(typeof checkedAgent.startedAt === "string", "agent.startedAt should be present");
@@ -1132,7 +1132,7 @@ test(
 		const rec = reg.agents["a-0001"];
 		assert.ok(rec, "a-0001 must exist in registry");
 		assert.equal(rec.tmuxWindowId, spawned.tmuxWindowId, "registry tmuxWindowId should match spawned value");
-		assert.equal(rec.branch, "parallel-agent/a-0001", "registry branch should follow naming convention");
+		assert.equal(rec.branch, "side-agent/a-0001", "registry branch should follow naming convention");
 
 		// Cleanup — wait for child Pi to boot before sending !/quit so the
 		// interrupt is delivered while Pi is at an interactive prompt.
@@ -1187,12 +1187,12 @@ test(
 
 		// Frame the request as a natural user need rather than a raw tool-call
 		// directive.  Models respond more reliably when the prompt maps clearly
-		// to the tool's purpose ("start a parallel agent for me") than when
+		// to the tool's purpose ("start a side agent for me") than when
 		// given a mechanical instruction ("call tool X with arg Y").
 		// The agent is told to /quit immediately to keep the test short.
 		await sendParentCommand(
 			harness,
-			`Please start a new parallel agent worker for me. The agent's task is: "integration-test worker — immediately type /quit to exit". Use the agent-start tool to create the agent now.`,
+			`Please start a new side agent worker for me. The agent's task is: "integration-test worker — immediately type /quit to exit". Use the agent-start tool to create the agent now.`,
 		);
 
 		// Wait for the agent to appear in the registry with all tmux and
@@ -1218,7 +1218,7 @@ test(
 			typeof sp.worktreePath === "string" && sp.worktreePath.length > 0,
 			`worktreePath must be a non-empty string, got: ${sp.worktreePath}`,
 		);
-		assert.strictEqual(sp.branch, "parallel-agent/a-0001", `branch must be parallel-agent/a-0001, got: ${sp.branch}`);
+		assert.strictEqual(sp.branch, "side-agent/a-0001", `branch must be side-agent/a-0001, got: ${sp.branch}`);
 		assert.ok(Array.isArray(sp.warnings), `warnings must be an array, got: ${JSON.stringify(sp.warnings)}`);
 
 		// — External-effect cross-checks: tool result fields refer to real resources —

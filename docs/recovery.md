@@ -1,17 +1,17 @@
-# pi-parallel-agents recovery runbook
+# pi-side-agents recovery runbook
 
-Practical recovery steps for common parallel-agent failures.
+Practical recovery steps for common side-agent failures.
 
 > Assumptions: run commands from the **parent repo root** (this directory), unless noted.
 
 ## Quick state map
 
-- Registry: `.pi/parallel-agents/registry.json`
-- Registry lock: `.pi/parallel-agents/registry.lock`
-- Runtime files per agent: `.pi/parallel-agents/runtime/<agent-id>/`
+- Registry: `.pi/side-agents/registry.json`
+- Registry lock: `.pi/side-agents/registry.lock`
+- Runtime files per agent: `.pi/side-agents/runtime/<agent-id>/`
   - `kickoff.md`, `backlog.log`, `exit.json`, `launch.sh`
 - Worktree lock per agent slot: `../<repo>-agent-worktree-XXXX/.pi/active.lock`
-- Merge critical-section lock (finish script): `.pi/parallel-agents/merge.lock`
+- Merge critical-section lock (finish script): `.pi/side-agents/merge.lock`
 
 ---
 
@@ -31,10 +31,10 @@ Practical recovery steps for common parallel-agent failures.
 3. If you expected a just-started agent, check registry directly:
 
 ```bash
-node -e 'const fs=require("fs");const p=".pi/parallel-agents/registry.json";if(!fs.existsSync(p)){console.log("registry missing");process.exit(0)};const r=JSON.parse(fs.readFileSync(p,"utf8"));console.log(Object.keys(r.agents||{}).sort().join("\n"));'
+node -e 'const fs=require("fs");const p=".pi/side-agents/registry.json";if(!fs.existsSync(p)){console.log("registry missing");process.exit(0)};const r=JSON.parse(fs.readFileSync(p,"utf8"));console.log(Object.keys(r.agents||{}).sort().join("\n"));'
 ```
 
-4. If the id is gone but you need logs, inspect `.pi/parallel-agents/runtime/<id>/backlog.log` (if still present), then start a fresh agent.
+4. If the id is gone but you need logs, inspect `.pi/side-agents/runtime/<id>/backlog.log` (if still present), then start a fresh agent.
 
 ---
 
@@ -58,9 +58,9 @@ agent-check { "id": "<id>" }
 
 ```bash
 ID="a-0001"
-ls -la ".pi/parallel-agents/runtime/$ID"
-tail -n 120 ".pi/parallel-agents/runtime/$ID/backlog.log"
-[ -f ".pi/parallel-agents/runtime/$ID/exit.json" ] && cat ".pi/parallel-agents/runtime/$ID/exit.json"
+ls -la ".pi/side-agents/runtime/$ID"
+tail -n 120 ".pi/side-agents/runtime/$ID/backlog.log"
+[ -f ".pi/side-agents/runtime/$ID/exit.json" ] && cat ".pi/side-agents/runtime/$ID/exit.json"
 ```
 
 3. If tmux window still exists, try graceful stop (tool):
@@ -80,7 +80,7 @@ agent-send { "id": "<id>", "prompt": "!/quit" }
 
 ### Symptoms
 
-- Commands/tools fail with: `Timed out waiting for lock .../.pi/parallel-agents/registry.lock`
+- Commands/tools fail with: `Timed out waiting for lock .../.pi/side-agents/registry.lock`
 
 ### Notes
 
@@ -93,7 +93,7 @@ agent-send { "id": "<id>", "prompt": "!/quit" }
 1. Inspect lock file and timestamp:
 
 ```bash
-LOCK=".pi/parallel-agents/registry.lock"
+LOCK=".pi/side-agents/registry.lock"
 ls -l "$LOCK" 2>/dev/null || echo "no registry.lock"
 [ -f "$LOCK" ] && cat "$LOCK"
 ```
@@ -101,7 +101,7 @@ ls -l "$LOCK" 2>/dev/null || echo "no registry.lock"
 2. If lock keeps timing out and no active parent operation is running, remove stale lock:
 
 ```bash
-rm -f ".pi/parallel-agents/registry.lock"
+rm -f ".pi/side-agents/registry.lock"
 ```
 
 3. Retry the failed action (`/agents`, `agent-check` tool, etc.).
@@ -163,7 +163,7 @@ Use this when an agent is terminal (`failed` or `crashed`) and you want to tidy 
 ```bash
 ID="a-0001"
 WT="../<repo>-agent-worktree-0001"   # use actual worktreePath from agent-check
-rm -rf ".pi/parallel-agents/runtime/$ID"
+rm -rf ".pi/side-agents/runtime/$ID"
 rm -f "$WT/.pi/active.lock"
 ```
 
@@ -181,13 +181,13 @@ tmux kill-window -t "@<window-id>" 2>/dev/null || true
 
 ```bash
 # Registry summary (id, status, tmux window, worktree)
-node -e 'const fs=require("fs");const p=".pi/parallel-agents/registry.json";if(!fs.existsSync(p)){console.log("registry missing");process.exit(0)};const r=JSON.parse(fs.readFileSync(p,"utf8"));for(const id of Object.keys(r.agents||{}).sort()){const a=r.agents[id];console.log(`${id}\t${a.status}\t${a.tmuxWindowId??"-"}\t${a.worktreePath??"-"}`)}'
+node -e 'const fs=require("fs");const p=".pi/side-agents/registry.json";if(!fs.existsSync(p)){console.log("registry missing");process.exit(0)};const r=JSON.parse(fs.readFileSync(p,"utf8"));for(const id of Object.keys(r.agents||{}).sort()){const a=r.agents[id];console.log(`${id}\t${a.status}\t${a.tmuxWindowId??"-"}\t${a.worktreePath??"-"}`)}'
 
 # Runtime dirs
-find .pi/parallel-agents/runtime -maxdepth 2 -mindepth 2 -type d 2>/dev/null | sort
+find .pi/side-agents/runtime -maxdepth 2 -mindepth 2 -type d 2>/dev/null | sort
 
 # Lock files
-ls -l .pi/parallel-agents/*.lock 2>/dev/null || true
+ls -l .pi/side-agents/*.lock 2>/dev/null || true
 REPO_NAME="$(basename "$PWD")"; find .. -maxdepth 2 -type f -path "../${REPO_NAME}-agent-worktree-*/.pi/active.lock" -print
 ```
 
@@ -195,12 +195,12 @@ REPO_NAME="$(basename "$PWD")"; find .. -maxdepth 2 -type f -path "../${REPO_NAM
 
 ```bash
 # Remove only known-stale lock files
-rm -f .pi/parallel-agents/registry.lock
-rm -f .pi/parallel-agents/merge.lock
+rm -f .pi/side-agents/registry.lock
+rm -f .pi/side-agents/merge.lock
 rm -f ../<repo>-agent-worktree-XXXX/.pi/active.lock
 
 # Remove runtime artifacts for one terminal agent
-rm -rf .pi/parallel-agents/runtime/<agent-id>
+rm -rf .pi/side-agents/runtime/<agent-id>
 ```
 
 Prefer `/agents` for registry record cleanup to avoid manual JSON edits while another session may be writing.

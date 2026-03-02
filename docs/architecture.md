@@ -1,8 +1,8 @@
-# pi-parallel-agents architecture (v0 draft)
+# pi-side-agents architecture (v0 draft)
 
 ## 1) Problem statement
 
-`pi-parallel-agents` should let users keep momentum in a primary Pi session while side tasks execute in parallel child Pi sessions, each isolated in its own git worktree + tmux window.
+`pi-side-agents` should let users keep momentum in a primary Pi session while side tasks execute in parallel child Pi sessions, each isolated in its own git worktree + tmux window.
 
 Primary outcomes:
 
@@ -19,7 +19,7 @@ Primary outcomes:
 - One child Pi process per task, launched in new tmux window.
 - Worktree pool allocation/reuse with lock files.
 - Parent-visible child status + tmux window id.
-- Child lifecycle scripts (`.pi/parallel-agent-start.sh`, finish skill/script path).
+- Child lifecycle scripts (`.pi/side-agent-start.sh`, finish skill/script path).
 - Programmatic control tools: `agent-start`, `agent-check`, `agent-wait-any`, `agent-send`.
 
 ### Out of scope (initially)
@@ -41,7 +41,7 @@ Parent Pi session
   └─ Agent control tools API
 
 Child Pi session (one per agent)
-  ├─ Bootstrapped by parallel-agent-start.sh
+  ├─ Bootstrapped by side-agent-start.sh
   ├─ Works inside allocated worktree + branch
   ├─ Reports status/log tail
   └─ Finishes via finish skill (merge/PR workflow)
@@ -66,8 +66,8 @@ Persistent file-backed registry so all Pi sessions can render current child stat
 
 Suggested location:
 
-- Parent checkout: `.pi/parallel-agents/registry.json`
-- Optional per-agent detail: `.pi/parallel-agents/agents/<agentId>.json`
+- Parent checkout: `.pi/side-agents/registry.json`
+- Optional per-agent detail: `.pi/side-agents/agents/<agentId>.json`
 
 Minimal fields per agent:
 
@@ -102,7 +102,7 @@ Lock file JSON proposal:
   "parentSessionId": "...",
   "pid": 12345,
   "tmuxWindowId": "@19",
-  "branch": "parallel-agent/a-0007",
+  "branch": "side-agent/a-0007",
   "startedAt": "2026-02-27T04:58:00Z"
 }
 ```
@@ -112,7 +112,7 @@ Rules:
 - Reuse unlocked pool slots.
 - If locked but not tracked in parent registry, warn as stale/orphaned lock.
 - If slot missing, create via `git worktree add ...`.
-- Ensure worktree branch policy is deterministic (`parallel-agent/<id>`).
+- Ensure worktree branch policy is deterministic (`side-agent/<id>`).
 - Treat branch naming as internal implementation detail (not UX-facing).
 
 ### 4.4 Tmux orchestrator
@@ -129,7 +129,7 @@ Responsibilities:
 
 #### Start script
 
-- Path: `.pi/parallel-agent-start.sh`
+- Path: `.pi/side-agent-start.sh`
 - Responsibilities:
   - Validate worktree + branch.
   - Sync branch baseline from main checkout HEAD (according to policy).
@@ -139,13 +139,13 @@ Responsibilities:
 
 #### Finish flow
 
-- Skill path (planned): `.pi/parallel-agent-skills/finish/SKILL.md`
+- Skill path (planned): `.pi/side-agent-skills/finish/SKILL.md`
 - Typical trigger: explicit child-local user approval (e.g., “LGTM”).
 - Finish skill instruction should discuss/confirm finish action with user before executing.
-- Default finish algorithm (`.pi/parallel-agent-finish.sh`):
-  1. In child worktree on `parallel-agent/<id>`, run `git rebase main`.
+- Default finish algorithm (`.pi/side-agent-finish.sh`):
+  1. In child worktree on `side-agent/<id>`, run `git rebase main`.
   2. If rebase conflicts, keep user in child branch for resolution (`git rebase --continue`) and retry.
-  3. If successful, enter short critical section in parent checkout and fast-forward `main` to `parallel-agent/<id>` (`git merge --ff-only`).
+  3. If successful, enter short critical section in parent checkout and fast-forward `main` to `side-agent/<id>` (`git merge --ff-only`).
   4. If parent-side fast-forward fails (because main moved), return to child worktree, re-run step 1, retry.
   5. On success, release worktree lock and let the launcher exit with code 0 (successful agents are auto-pruned from registry).
 - Optional alternative flow: create/push PR when explicitly requested.
@@ -179,7 +179,7 @@ Because multiple agents may try to finalize concurrently, parent-checkout merge 
 
 Suggested lock file:
 
-- `.pi/parallel-agents/merge.lock`
+- `.pi/side-agents/merge.lock`
 
 Suggested lock contents (diagnostic JSON):
 
@@ -194,7 +194,7 @@ Suggested lock contents (diagnostic JSON):
 
 Behavior:
 
-- Lock is held only for parent-side `parallel-agent/<id> -> main` fast-forward attempt.
+- Lock is held only for parent-side `side-agent/<id> -> main` fast-forward attempt.
 - If busy, finishing agents wait/retry with progress status.
 - On stale lock detection, warn with manual recovery instructions (consistent with warn-only lock policy).
 
@@ -219,7 +219,7 @@ UI can map these to compact labels/icons.
 
 1. Parent user runs `/agent <task>`.
 2. Parent allocates worktree slot + writes lock.
-3. Parent creates agent id + internal branch (`parallel-agent/<id>`).
+3. Parent creates agent id + internal branch (`side-agent/<id>`).
 4. Parent spawns tmux window and launches child with kickoff prompt.
 5. Parent updates registry to `running` and returns control immediately.
 6. Child performs work; status + backlog tail are queryable.
@@ -257,5 +257,5 @@ UI can map these to compact labels/icons.
 
 ## 10) Remaining open decisions
 
-1. **Bootstrap strictness**: keep startup bootstrap as optional hook (`.pi/parallel-agent-bootstrap.sh`) or enforce policy checks (e.g., branch/head sync hard-fail) by default?
+1. **Bootstrap strictness**: keep startup bootstrap as optional hook (`.pi/side-agent-bootstrap.sh`) or enforce policy checks (e.g., branch/head sync hard-fail) by default?
 2. **Status fidelity**: whether/how to expose richer live child states (`thinking` / `tool` / `pending`) instead of coarse runtime states only.

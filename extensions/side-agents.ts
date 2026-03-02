@@ -6,17 +6,17 @@ import { spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
-const ENV_STATE_ROOT = "PI_PARALLEL_AGENTS_ROOT";
-const ENV_AGENT_ID = "PI_PARALLEL_AGENT_ID";
-const ENV_PARENT_SESSION = "PI_PARALLEL_PARENT_SESSION";
-const ENV_PARENT_REPO = "PI_PARALLEL_PARENT_REPO";
-const ENV_RUNTIME_DIR = "PI_PARALLEL_RUNTIME_DIR";
+const ENV_STATE_ROOT = "PI_SIDE_AGENTS_ROOT";
+const ENV_AGENT_ID = "PI_SIDE_AGENT_ID";
+const ENV_PARENT_SESSION = "PI_SIDE_PARENT_SESSION";
+const ENV_PARENT_REPO = "PI_SIDE_PARENT_REPO";
+const ENV_RUNTIME_DIR = "PI_SIDE_RUNTIME_DIR";
 
-const STATUS_KEY = "parallel-agents";
+const STATUS_KEY = "side-agents";
 const REGISTRY_VERSION = 1;
-const CHILD_LINK_ENTRY_TYPE = "parallel-agent-link";
-const STATUS_UPDATE_MESSAGE_TYPE = "parallel-agent-status";
-const PROMPT_UPDATE_MESSAGE_TYPE = "parallel-agent-prompt";
+const CHILD_LINK_ENTRY_TYPE = "side-agent-link";
+const STATUS_UPDATE_MESSAGE_TYPE = "side-agent-status";
+const PROMPT_UPDATE_MESSAGE_TYPE = "side-agent-prompt";
 
 const SUMMARY_SYSTEM_PROMPT = `You are writing a handoff summary for a background coding agent.
 
@@ -170,7 +170,7 @@ function isTerminalStatus(status: AgentStatus): boolean {
 	return status === "done" || status === "failed" || status === "crashed";
 }
 
-const PROMPT_LOG_PREFIX = "[parallel-agent][prompt]";
+const PROMPT_LOG_PREFIX = "[side-agent][prompt]";
 const TASK_PREVIEW_MAX_CHARS = 220;
 const BACKLOG_LINE_MAX_CHARS = 240;
 const BACKLOG_TOTAL_MAX_CHARS = 2400;
@@ -391,7 +391,7 @@ function getStateRoot(ctx: ExtensionContext): string {
 }
 
 function getMetaDir(stateRoot: string): string {
-	return join(stateRoot, ".pi", "parallel-agents");
+	return join(stateRoot, ".pi", "side-agents");
 }
 
 function getRegistryPath(stateRoot: string): string {
@@ -575,7 +575,7 @@ async function generateSlug(ctx: ExtensionContext, task: string): Promise<{ slug
 	}
 }
 
-/** Collect all agent IDs currently known in the registry or checked out as parallel-agent branches. */
+/** Collect all agent IDs currently known in the registry or checked out as side-agent branches. */
 function existingAgentIds(registry: RegistryFile, repoRoot: string): Set<string> {
 	const ids = new Set<string>(Object.keys(registry.agents));
 
@@ -586,8 +586,8 @@ function existingAgentIds(registry: RegistryFile, repoRoot: string): Set<string>
 			const branchRef = line.slice("branch ".length).trim();
 			if (!branchRef || branchRef === "(detached)") continue;
 			const branch = branchRef.startsWith("refs/heads/") ? branchRef.slice("refs/heads/".length) : branchRef;
-			if (branch.startsWith("parallel-agent/")) {
-				ids.add(branch.slice("parallel-agent/".length));
+			if (branch.startsWith("side-agent/")) {
+				ids.add(branch.slice("side-agent/".length));
 			}
 		}
 	}
@@ -775,7 +775,7 @@ async function syncParallelAgentPiFiles(parentRepoRoot: string, worktreePath: st
 
 	const sourceEntries = await fs.readdir(parentPiDir, { withFileTypes: true });
 	const names = sourceEntries
-		.filter((entry) => entry.name.startsWith("parallel-agent-"))
+		.filter((entry) => entry.name.startsWith("side-agent-"))
 		.map((entry) => entry.name);
 	if (names.length === 0) return;
 
@@ -817,7 +817,7 @@ async function allocateWorktree(options: {
 	const { repoRoot, stateRoot, agentId, parentSessionId } = options;
 
 	const warnings: string[] = [];
-	const branch = `parallel-agent/${agentId}`;
+	const branch = `side-agent/${agentId}`;
 	const mainHead = runOrThrow("git", ["-C", repoRoot, "rev-parse", "HEAD"]).stdout.trim();
 
 	const registry = await loadRegistry(stateRoot);
@@ -1007,8 +1007,8 @@ PROMPT_FILE=${shellQuote(params.promptPath)}
 EXIT_FILE=${shellQuote(params.exitFile)}
 MODEL_SPEC=${shellQuote(params.modelSpec ?? "")}
 RUNTIME_DIR=${shellQuote(params.runtimeDir)}
-START_SCRIPT=\"$WORKTREE/.pi/parallel-agent-start.sh\"
-CHILD_SKILLS_DIR=\"$WORKTREE/.pi/parallel-agent-skills\"
+START_SCRIPT=\"$WORKTREE/.pi/side-agent-start.sh\"
+CHILD_SKILLS_DIR=\"$WORKTREE/.pi/side-agent-skills\"
 
 export ${ENV_AGENT_ID}=\"$AGENT_ID\"
 export ${ENV_PARENT_SESSION}=\"$PARENT_SESSION\"
@@ -1029,9 +1029,9 @@ if [[ -x "$START_SCRIPT" ]]; then
   start_exit=$?
   set -e
   if [[ "$start_exit" -ne 0 ]]; then
-    echo "[parallel-agent] start script failed with code $start_exit"
+    echo "[side-agent] start script failed with code $start_exit"
     write_exit "$start_exit"
-    read -n 1 -s -r -p "[parallel-agent] Press any key to close this tmux window..." || true
+    read -n 1 -s -r -p "[side-agent] Press any key to close this tmux window..." || true
     echo
     tmux kill-window -t "$WINDOW_ID" || true
     exit "$start_exit"
@@ -1055,12 +1055,12 @@ set -e
 write_exit "$exit_code"
 
 if [[ "$exit_code" -eq 0 ]]; then
-  echo "[parallel-agent] Agent finished."
+  echo "[side-agent] Agent finished."
 else
-  echo "[parallel-agent] Agent exited with code $exit_code."
+  echo "[side-agent] Agent exited with code $exit_code."
 fi
 
-read -n 1 -s -r -p "[parallel-agent] Press any key to close this tmux window..." || true
+read -n 1 -s -r -p "[side-agent] Press any key to close this tmux window..." || true
 echo
 
 tmux kill-window -t "$WINDOW_ID" || true
@@ -1238,7 +1238,7 @@ function renderInfoMessage(pi: ExtensionAPI, ctx: ExtensionContext, title: strin
 	const content = [title, "", ...lines].join("\n");
 	if (ctx.hasUI) {
 		pi.sendMessage({
-			customType: "parallel-agents-report",
+			customType: "side-agents-report",
 			content,
 			display: true,
 		});
@@ -1812,7 +1812,7 @@ function collectStatusTransitions(stateRoot: string, agents: AgentRecord[]): Sta
 
 function formatStatusTransitionMessage(transition: StatusTransitionNotice): string {
 	const win = transition.tmuxWindowIndex !== undefined ? ` (tmux #${transition.tmuxWindowIndex})` : "";
-	return `parallel-agent ${transition.id}: ${transition.fromStatus} -> ${transition.toStatus}${win}`;
+	return `side-agent ${transition.id}: ${transition.fromStatus} -> ${transition.toStatus}${win}`;
 }
 
 function emitStatusTransitions(pi: ExtensionAPI, ctx: ExtensionContext, transitions: StatusTransitionNotice[]): void {
@@ -1847,7 +1847,7 @@ function emitStatusTransitions(pi: ExtensionAPI, ctx: ExtensionContext, transiti
 
 function emitKickoffPromptMessage(pi: ExtensionAPI, started: StartAgentResult): void {
 	const win = started.tmuxWindowIndex !== undefined ? ` (tmux #${started.tmuxWindowIndex})` : "";
-	const content = `parallel-agent ${started.id}: kickoff prompt${win}\n\n${started.prompt}`;
+	const content = `side-agent ${started.id}: kickoff prompt${win}\n\n${started.prompt}`;
 	pi.sendMessage(
 		{
 			customType: PROMPT_UPDATE_MESSAGE_TYPE,
@@ -1927,7 +1927,7 @@ function ensureStatusPoller(pi: ExtensionAPI, ctx: ExtensionContext): void {
 }
 
 
-export default function parallelAgentsExtension(pi: ExtensionAPI) {
+export default function sideAgentsExtension(pi: ExtensionAPI) {
 	pi.registerCommand("agent", {
 		description: "Spawn a background child agent in its own tmux window/worktree: /agent [-model <provider/id>] <task>",
 		handler: async (args, ctx) => {
@@ -1957,7 +1957,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 				for (const line of started.prompt.split(/\r?\n/)) {
 					lines.push(`  ${line}`);
 				}
-				renderInfoMessage(pi, ctx, "parallel-agent started", lines);
+				renderInfoMessage(pi, ctx, "side-agent started", lines);
 				await renderStatusLine(pi, ctx).catch(() => {});
 			} catch (err) {
 				ctx.hasUI && ctx.ui.notify(`Failed to start agent: ${stringifyError(err)}`, "error");
@@ -1966,7 +1966,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("agents", {
-		description: "List tracked parallel agents",
+		description: "List tracked side agents",
 		handler: async (_args, ctx) => {
 			const stateRoot = getStateRoot(ctx);
 			const repoRoot = resolveGitRoot(stateRoot);
@@ -1975,7 +1975,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 			let orphanLocks = await scanOrphanWorktreeLocks(repoRoot, registry);
 
 			if (records.length === 0 && orphanLocks.reclaimable.length === 0 && orphanLocks.blocked.length === 0) {
-				ctx.hasUI && ctx.ui.notify("No tracked parallel agents yet.", "info");
+				ctx.hasUI && ctx.ui.notify("No tracked side agents yet.", "info");
 				return;
 			}
 
@@ -2013,7 +2013,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 				}
 			}
 
-			renderInfoMessage(pi, ctx, "parallel-agents", lines);
+			renderInfoMessage(pi, ctx, "side-agents", lines);
 
 			if (failedIds.length > 0 && ctx.hasUI) {
 				const confirmed = await ctx.ui.confirm(
@@ -2073,7 +2073,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 		name: "agent-start",
 		label: "Agent Start",
 		description:
-			"Start a background parallel child agent in tmux/worktree. Lifecycle: child should implement the change, then yield for review (do not auto-/quit); parent/user inspects, asks child to wrap up (finish flow), then quits. The description is sent verbatim (no automatic context summary), so include all necessary context. Provide a short kebab-case branchHint (max 3 words) for the agent's branch name. Returns { ok: true, id, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, warnings[] } on success, or { ok: false, error } on failure.",
+			"Start a background side agent in tmux/worktree. Lifecycle: child should implement the change, then yield for review (do not auto-/quit); parent/user inspects, asks child to wrap up (finish flow), then quits. The description is sent verbatim (no automatic context summary), so include all necessary context. Provide a short kebab-case branchHint (max 3 words) for the agent's branch name. Returns { ok: true, id, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, warnings[] } on success, or { ok: false, error } on failure.",
 		parameters: Type.Object({
 			description: Type.String({ description: "Task description for child agent kickoff prompt (include all necessary context)" }),
 			branchHint: Type.String({ description: "Short kebab-case branch slug, max 3 words (e.g. fix-auth-leak)" }),
@@ -2119,7 +2119,7 @@ export default function parallelAgentsExtension(pi: ExtensionAPI) {
 		name: "agent-check",
 		label: "Agent Check",
 		description:
-			"Check a given parallel agent status and return compact recent output. Returns { ok: true, agent: { id, status, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, task, startedAt, finishedAt?, exitCode?, error?, warnings[] }, backlog: string[] }, or { ok: false, error } if the agent id is unknown or a registry error occurs. backlog is sanitized/truncated for LLM safety; task is a compact preview. Statuses: allocating_worktree | spawning_tmux | starting | running | waiting_user | finishing | waiting_merge_lock | retrying_reconcile | failed | crashed. Agents that exit with code 0 are auto-removed from registry.",
+			"Check a given side agent status and return compact recent output. Returns { ok: true, agent: { id, status, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, task, startedAt, finishedAt?, exitCode?, error?, warnings[] }, backlog: string[] }, or { ok: false, error } if the agent id is unknown or a registry error occurs. backlog is sanitized/truncated for LLM safety; task is a compact preview. Statuses: allocating_worktree | spawning_tmux | starting | running | waiting_user | finishing | waiting_merge_lock | retrying_reconcile | failed | crashed. Agents that exit with code 0 are auto-removed from registry.",
 		parameters: Type.Object({
 			id: Type.String({ description: "Agent id" }),
 		}),
