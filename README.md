@@ -1,27 +1,31 @@
 # pi-side-agents
 
-**Code in sprints** (using agents *asynchronously*), **not in a marathon** (*synchronous* task-by-task flow).
+**Code in sprints** (using agents *asynchronously*), **not in a marathon** (*sequential* task-by-task flow).
 
-Instead of waiting for one backlog item to finish before starting the next, spin tasks out into single-use child agents as soon as they occur to you. Each child runs in its own **tmux window** and **git worktree**, so you can keep shipping in parallel while maintaining isolation. Each child is a one-off and lives and dies with its short topic branch and tmux window—no "teams of long-running agents messaging each other" or "role-based subagents" complexity. The workflow is unified, simple, and deterministic.
+Instead of waiting for one backlog item to finish before starting the next, spin tasks out into single-use child agents as soon as they occur to you. Each child runs in its own **tmux window** and **git worktree**, so you can keep shipping in parallel while maintaining isolation and control (asynchronous does not mean autonomous). Each child is a one-off and lives and dies with its short topic branch and tmux window—no "teams of long-running agents messaging each other" or "role-based subagents" complexity. The workflow is unified, simple, and deterministic.
 
-This extension automates the full tmux/worktree/merge lifecycle for you. Parallel agents can also be spawned and controlled by another agent to orchestrate its own flock of subagents.
+The most advanced users of AI coding agents have worked like this for a while, but the setup has been a bit daunting. This extension automates the full tmux/worktree/merge lifecycle for you and takes just a few seconds to set up. Plus, side agents can also be spawned and controlled by another agent to orchestrate its own flock of subagents.
 
 **Warning:** You will build a lot more, which means you may run out of context windows and need to take better care of your wellbeing between sprints. Also, for the community's sake, please don't max out Claude subscriptions with Pi—use a Codex model (or APIs) by default.
 
+---
+
+<img width="1512" height="882" alt="image" src="https://github.com/user-attachments/assets/9010be2e-755e-41cc-9b98-312ba3fdd53e" />
+(A main Pi agent console: the status line shows the currently operating side-agents. Once an agent entry turns blue, you can switch to the shown tmux window and unblock it. Fire off new ideas with a single /agent command. A new side-agent opens a tmux window in the background and automatically gets its short-lived topic branch, a separate worktree with properly replicated build setup, and merges back to main once you type "LGTM".)
+
 ## What it does
 
-- Adds `/agent [-model ...] <task>` to spawn a background child Pi agent.
-- Adds `/agents` to inspect current agents and clean up stale state.
+- New command `/agent [-model ...] <task>` to spawn a background child Pi agent.
 - Shows active-agent summary with tmux window numbers in the statusline.
-- Includes `agent-setup` skill to scaffold project-specific lifecycle scripts.
-- Tracks runtime state in `.pi/side-agents/registry.json`.
-- Exposes orchestration tools for parent agents:
-  - `agent-start`
-  - `agent-check`
-  - `agent-wait-any`
-  - `agent-send`
+- New command `/agents` to inspect current agents and clean up stale state.
+- New skill `agent-setup` to scaffold project-specific lifecycle scripts (flexible worktree initialization and merge process).
+- Exposes orchestration _tools_ for parent agents: `agent-start`, `agent-check`, `agent-wait-any`, `agent-send`
 
 ## Quick start
+
+<p align="center">
+<img width="1003" height="865" alt="image" src="https://github.com/user-attachments/assets/4bad3c72-3672-49a5-acc5-0688ba3cc78f" />
+</p>
 
 1. **Run setup once** in your project: `/skill:agent-setup`
    - If you want to change the setup later, or are upgrading this skill and want to get new setup goodies, just re-run the skill with a short prompt.
@@ -42,6 +46,10 @@ This extension automates the full tmux/worktree/merge lifecycle for you. Paralle
    - Old worktrees are kept around and reused and updated by new agents.
    - Old branches are auto-pruned during reuse by a new agent.
    - You can pause your work on a topic—if you `/quit` before work is merged, the branch will stay around.
+
+<p align="center">
+<img width="706" height="364" alt="image" src="https://github.com/user-attachments/assets/212a0fc3-7f84-4889-9eaa-80007280df01" />
+</p>
 
 ## Requirements
 
