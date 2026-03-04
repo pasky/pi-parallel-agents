@@ -2243,10 +2243,11 @@ export default function sideAgentsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "agent-start",
+		name: "agent-start"
+		,
 		label: "Agent Start",
 		description:
-			"Start a background side agent in tmux/worktree. Lifecycle: child should implement the change, then yield for review (do not auto-/quit); parent/user inspects, asks child to wrap up (finish flow), then quits. The description is sent verbatim (no automatic context summary), so include all necessary context. Provide a short kebab-case branchHint (max 3 words) for the agent's branch name. Returns { ok: true, id, task, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, warnings[] } on success, or { ok: false, error } on failure.",
+			"Start a background side agent in tmux/worktree. Lifecycle: child implements the change or asks for clarification -> wait-state and yield -> parent inspects (agent-check or agent-wait-any), reviews work, reacts -> eventually, parent asks child to wrap up (send 'LGTM, merge'), sends /quit when child is done. Provide a short kebab-case branchHint (max 3 words) for the agent's branch name. Returns { ok: true, id, task, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, warnings[] } on success, or { ok: false, error } on failure.",
 		parameters: Type.Object({
 			description: Type.String({ description: "Task description for child agent kickoff prompt (include all necessary context)" }),
 			branchHint: Type.String({ description: "Short kebab-case branch slug, max 3 words (e.g. fix-auth-leak)" }),
@@ -2342,10 +2343,10 @@ export default function sideAgentsExtension(pi: ExtensionAPI) {
 		name: "agent-send",
 		label: "Agent Send",
 		description:
-			"Send a steering/follow-up prompt to a child agent's tmux pane. Prefix rules: '!' — send C-c interrupt first; if there is additional text after '!', a 300 ms pause is inserted before sending it so Pi can return to interactive prompt. '/' — forwarded as-is; Pi treats lines beginning with '/' as slash commands. Send '!' alone to interrupt without a follow-up. Returns { ok: boolean, message: string }.",
+			"Send a steering/follow-up prompt to a child agent's tmux pane. Returns { ok: boolean, message: string }.",
 		parameters: Type.Object({
 			id: Type.String({ description: "Agent id" }),
-			prompt: Type.String({ description: "Prompt text to send (prefix with '!' to interrupt first, '/' for slash commands)" }),
+			prompt: Type.String({ description: "Prompt text to send (prefix with '!' to interrupt first instead of organic steering, '/' for slash commands like /quit)" }),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			try {
