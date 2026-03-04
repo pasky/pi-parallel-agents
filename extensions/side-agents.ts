@@ -34,12 +34,8 @@ Preferred content (but only when relevant):
 type AgentStatus =
 	| "allocating_worktree"
 	| "spawning_tmux"
-	| "starting"
 	| "running"
 	| "waiting_user"
-	| "finishing"
-	| "waiting_merge_lock"
-	| "retrying_reconcile"
 	| "done"
 	| "failed"
 	| "crashed";
@@ -47,12 +43,8 @@ type AgentStatus =
 const ALL_AGENT_STATUSES: AgentStatus[] = [
 	"allocating_worktree",
 	"spawning_tmux",
-	"starting",
 	"running",
 	"waiting_user",
-	"finishing",
-	"waiting_merge_lock",
-	"retrying_reconcile",
 	"failed",
 	"crashed",
 ];
@@ -238,18 +230,10 @@ function statusShort(status: AgentStatus): string {
 			return "alloc";
 		case "spawning_tmux":
 			return "tmux";
-		case "starting":
-			return "start";
 		case "running":
 			return "run";
 		case "waiting_user":
 			return "wait";
-		case "finishing":
-			return "finish";
-		case "waiting_merge_lock":
-			return "lock";
-		case "retrying_reconcile":
-			return "retry";
 		case "done":
 			return "done";
 		case "failed":
@@ -264,13 +248,9 @@ function statusColorRole(status: AgentStatus): "warning" | "muted" | "accent" | 
 		// Rare/transient states: highlight so they stand out.
 		case "allocating_worktree":
 		case "spawning_tmux":
-		case "starting":
-		case "waiting_merge_lock":
-		case "retrying_reconcile":
 			return "warning";
 		// Normal working states: keep low visual weight.
 		case "running":
-		case "finishing":
 		case "done":
 			return "muted";
 		// Needs user attention.
@@ -1316,7 +1296,7 @@ async function refreshOneAgentRuntime(stateRoot: string, record: AgentRecord): P
 
 	const live = tmuxWindowExists(record.tmuxWindowId);
 	if (live) {
-		if (record.status === "allocating_worktree" || record.status === "spawning_tmux" || record.status === "starting") {
+		if (record.status === "allocating_worktree" || record.status === "spawning_tmux") {
 			await setRecordStatus(stateRoot, record, "running");
 		}
 		return { removeFromRegistry: false };
@@ -1783,12 +1763,6 @@ async function setChildRuntimeStatus(ctx: ExtensionContext, nextStatus: AgentSta
 		const record = registry.agents[agentId];
 		if (!record) return;
 		if (isTerminalStatus(record.status)) return;
-		if (
-			nextStatus === "waiting_user" &&
-			(record.status === "finishing" || record.status === "waiting_merge_lock" || record.status === "retrying_reconcile")
-		) {
-			return;
-		}
 
 		const changed = await setRecordStatus(stateRoot, record, nextStatus);
 		if (!changed) {
@@ -2294,7 +2268,7 @@ export default function sideAgentsExtension(pi: ExtensionAPI) {
 		name: "agent-check",
 		label: "Agent Check",
 		description:
-			"Check a given side agent status and return compact recent output. Returns { ok: true, agent: { id, status, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, task, startedAt, finishedAt?, exitCode?, error?, warnings[] }, backlog: string[] }, or { ok: false, error } if the agent id is unknown or a registry error occurs. backlog is sanitized/truncated for LLM safety; task is a compact preview. Statuses: allocating_worktree | spawning_tmux | starting | running | waiting_user | finishing | waiting_merge_lock | retrying_reconcile | failed | crashed. Agents that exit with code 0 are auto-removed from registry.",
+			"Check a given side agent status and return compact recent output. Returns { ok: true, agent: { id, status, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, task, startedAt, finishedAt?, exitCode?, error?, warnings[] }, backlog: string[] }, or { ok: false, error } if the agent id is unknown or a registry error occurs. backlog is sanitized/truncated for LLM safety; task is a compact preview. Statuses: allocating_worktree | spawning_tmux | running | waiting_user | failed | crashed. Agents that exit with code 0 are auto-removed from registry.",
 		parameters: Type.Object({
 			id: Type.String({ description: "Agent id" }),
 		}),
