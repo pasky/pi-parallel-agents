@@ -2235,7 +2235,7 @@ export default function sideAgentsExtension(pi: ExtensionAPI) {
 		name: "agent-start",
 		label: "Agent Start",
 		description:
-			"Start a background side agent in tmux/worktree. Lifecycle: child should implement the change, then yield for review (do not auto-/quit); parent/user inspects, asks child to wrap up (finish flow), then quits. The description is sent verbatim (no automatic context summary), so include all necessary context. Provide a short kebab-case branchHint (max 3 words) for the agent's branch name. Returns { ok: true, id, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, warnings[] } on success, or { ok: false, error } on failure.",
+			"Start a background side agent in tmux/worktree. Lifecycle: child should implement the change, then yield for review (do not auto-/quit); parent/user inspects, asks child to wrap up (finish flow), then quits. The description is sent verbatim (no automatic context summary), so include all necessary context. Provide a short kebab-case branchHint (max 3 words) for the agent's branch name. Returns { ok: true, id, task, tmuxWindowId, tmuxWindowIndex, worktreePath, branch, warnings[] } on success, or { ok: false, error } on failure.",
 		parameters: Type.Object({
 			description: Type.String({ description: "Task description for child agent kickoff prompt (include all necessary context)" }),
 			branchHint: Type.String({ description: "Short kebab-case branch slug, max 3 words (e.g. fix-auth-leak)" }),
@@ -2257,6 +2257,7 @@ export default function sideAgentsExtension(pi: ExtensionAPI) {
 								{
 									ok: true,
 									id: started.id,
+									task: params.description.length > 200 ? params.description.slice(0, 200) + "…" : params.description,
 									tmuxWindowId: started.tmuxWindowId,
 									tmuxWindowIndex: started.tmuxWindowIndex,
 									worktreePath: started.worktreePath,

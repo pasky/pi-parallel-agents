@@ -444,12 +444,13 @@ test("cleanupWorktreeLockBestEffort — missing path and missing lock never thro
 // 2. JSON shape / ok-field contracts
 // ---------------------------------------------------------------------------
 
-test("agent-start success shape must include ok: true", () => {
+test("agent-start success shape must include ok: true and task", () => {
 	// This test acts as a living specification for the tool contract.
 	// If this shape changes, the tool description and docs must be updated.
 	const exampleSuccess = {
 		ok: true,
 		id: "a-0001",
+		task: "refactor auth module",
 		tmuxWindowId: "@5",
 		tmuxWindowIndex: 5,
 		worktreePath: "/tmp/repo-agent-worktree-0001",
@@ -459,11 +460,34 @@ test("agent-start success shape must include ok: true", () => {
 
 	assert.strictEqual(exampleSuccess.ok, true, "success response must have ok: true");
 	assert.ok(typeof exampleSuccess.id === "string", "id must be a string");
+	assert.ok(typeof exampleSuccess.task === "string", "task must be a string");
 	assert.ok(typeof exampleSuccess.tmuxWindowId === "string", "tmuxWindowId must be a string");
 	assert.ok(typeof exampleSuccess.tmuxWindowIndex === "number", "tmuxWindowIndex must be a number");
 	assert.ok(typeof exampleSuccess.worktreePath === "string", "worktreePath must be a string");
 	assert.ok(typeof exampleSuccess.branch === "string", "branch must be a string");
 	assert.ok(Array.isArray(exampleSuccess.warnings), "warnings must be an array");
+});
+
+test("agent-start task field — short description is not truncated", () => {
+	const desc = "Fix the login bug";
+	const task = desc.length > 200 ? desc.slice(0, 200) + "…" : desc;
+	assert.strictEqual(task, "Fix the login bug");
+	assert.ok(!task.endsWith("…"), "short task should not have ellipsis");
+});
+
+test("agent-start task field — long description is truncated with ellipsis", () => {
+	const desc = "x".repeat(300);
+	const task = desc.length > 200 ? desc.slice(0, 200) + "…" : desc;
+	assert.strictEqual(task.length, 201, "truncated task should be 200 chars + ellipsis");
+	assert.ok(task.endsWith("…"), "truncated task must end with ellipsis");
+	assert.strictEqual(task.slice(0, 200), "x".repeat(200));
+});
+
+test("agent-start task field — exactly 200 chars is not truncated", () => {
+	const desc = "y".repeat(200);
+	const task = desc.length > 200 ? desc.slice(0, 200) + "…" : desc;
+	assert.strictEqual(task.length, 200);
+	assert.ok(!task.endsWith("…"), "exact-boundary task should not have ellipsis");
 });
 
 test("agent-start error shape must include ok: false and error string", () => {
