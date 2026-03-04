@@ -2,16 +2,25 @@
 
 Practical recovery steps for common side-agent failures.
 
-> Assumptions: run commands from the **parent repo root** (this directory), unless noted.
+> Assumptions: run commands from the **parent repo root** (git toplevel), unless noted.
+>
+> Agent IDs are **slugs** (e.g. `fix-auth-leak`, `add-auth-tests-2`). Replace examples accordingly.
 
 ## Quick state map
 
 - Registry: `.pi/side-agents/registry.json`
 - Registry lock: `.pi/side-agents/registry.lock`
-- Runtime files per agent: `.pi/side-agents/runtime/<agent-id>/`
-  - `kickoff.md`, `backlog.log`, `exit.json`, `launch.sh`
-- Worktree lock per agent slot: `../<repo>-agent-worktree-XXXX/.pi/active.lock`
-- Merge critical-section lock (finish script): `.pi/side-agents/merge.lock`
+- Runtime files per agent:
+  - `.pi/side-agents/runtime/<agent-id>/kickoff.md`
+  - `.pi/side-agents/runtime/<agent-id>/backlog.log`
+  - `.pi/side-agents/runtime/<agent-id>/exit.json`
+  - `.pi/side-agents/runtime/<agent-id>/launch.sh`
+- Runtime archive (if an agent id was reused):
+  - `.pi/side-agents/runtime-archive/<agent-id>/...`
+- Worktree lock per agent slot:
+  - `../<repo>-agent-worktree-XXXX/.pi/active.lock`
+- Merge critical-section lock (only if your finish script uses it):
+  - `.pi/side-agents/merge.lock`
 
 ---
 
@@ -19,22 +28,38 @@ Practical recovery steps for common side-agent failures.
 
 ### Symptoms
 
-- `agent-check`: `{ "ok": false, "error": "Unknown agent id: a-9999" }`
+- `agent-check`: `{ "ok": false, "error": "Unknown agent id: ..." }`
 - `agent-wait-any`: `{ "ok": false, "error": "Unknown agent id(s): ..." }` (fails fast on first poll)
 - `agent-send`: `{ "ok": false, "message": "Unknown agent id: ..." }`
+
+### Why it happens
+
+- You mistyped the id (common).
+- The agent **finished successfully** and was auto-pruned from the registry.
 
 ### Recovery
 
 1. List known agents:
    - `/agents`
-2. Retry with an existing id (`a-0001`, `a-0002`, ...).
+
+2. Retry with an existing id.
+
 3. If you expected a just-started agent, check registry directly:
 
 ```bash
 node -e 'const fs=require("fs");const p=".pi/side-agents/registry.json";if(!fs.existsSync(p)){console.log("registry missing");process.exit(0)};const r=JSON.parse(fs.readFileSync(p,"utf8"));console.log(Object.keys(r.agents||{}).sort().join("\n"));'
 ```
 
-4. If the id is gone but you need logs, inspect `.pi/side-agents/runtime/<id>/backlog.log` (if still present), then start a fresh agent.
+4. If the id is gone but you need logs, inspect runtime artifacts:
+
+```bash
+ID="fix-auth-leak"
+ls -la ".pi/side-agents/runtime/$ID" 2>/dev/null || true
+[ -f ".pi/side-agents/runtime/$ID/backlog.log" ] && tail -n 120 ".pi/side-agents/runtime/$ID/backlog.log"
+
+# If the id was reused, older logs may have been archived:
+find ".pi/side-agents/runtime-archive/$ID" -maxdepth 3 -type f -name backlog.log 2>/dev/null | head
+```
 
 ---
 
@@ -57,7 +82,7 @@ agent-check { "id": "<id>" }
 2. Inspect runtime artifacts:
 
 ```bash
-ID="a-0001"
+ID="fix-auth-leak"
 ls -la ".pi/side-agents/runtime/$ID"
 tail -n 120 ".pi/side-agents/runtime/$ID/backlog.log"
 [ -f ".pi/side-agents/runtime/$ID/exit.json" ] && cat ".pi/side-agents/runtime/$ID/exit.json"
@@ -70,9 +95,10 @@ agent-send { "id": "<id>", "prompt": "!/quit" }
 ```
 
 4. If tmux window is gone, treat as terminal crash:
-   - collect backlog/error
-   - spawn a replacement agent if needed (`/agent ...` or `agent-start`)
-   - clean up old failed/crashed record (see section 5)
+
+- collect backlog/error
+- spawn a replacement agent if needed (`/agent ...` or `agent-start`)
+- clean up old failed/crashed record (see section 5)
 
 ---
 
@@ -85,7 +111,7 @@ agent-send { "id": "<id>", "prompt": "!/quit" }
 ### Notes
 
 - Registry writes use a file lock.
-- Lock timeout is ~10s.
+- Lock wait timeout is ~10s.
 - Lock files older than ~30s are automatically considered stale and reaped.
 
 ### Recovery
@@ -105,6 +131,7 @@ rm -f ".pi/side-agents/registry.lock"
 ```
 
 3. Retry the failed action (`/agents`, `agent-check` tool, etc.).
+
 4. If contention recurs, reduce concurrent parent sessions mutating the same registry.
 
 ---
@@ -127,9 +154,12 @@ find .. -maxdepth 2 -type f -path "../${REPO_NAME}-agent-worktree-*/.pi/active.l
 ```
 
 2. Inspect each lock and cross-check with `/agents` or `registry.json`.
+
 3. Fast path: run `/agents` and confirm **Reclaim orphan worktree locks?** when offered.
-   - This only targets orphan locks with no tracked registry agent and no live pid/tmux signal.
-4. If you prefer manual cleanup, remove lock files directly:
+
+- This only targets orphan locks with **no tracked registry agent** and **no live pid/tmux signal**.
+
+4. Manual cleanup (if you prefer): remove lock files directly:
 
 ```bash
 LOCK="../<repo>-agent-worktree-0007/.pi/active.lock"
@@ -154,14 +184,17 @@ Use this when an agent is terminal (`failed` or `crashed`) and you want to tidy 
 1. Capture diagnostics first:
    - `agent-check` tool for `<id>`
    - save backlog/error if needed
+
 2. Preserve any useful work in the agent worktree (`git -C <worktree> status`, patch/commit).
+
 3. Remove registry entry (recommended path):
    - run `/agents`
    - confirm **Clean up failed agents?** prompt
+
 4. Clean runtime and lock leftovers for that id:
 
 ```bash
-ID="a-0001"
+ID="fix-auth-leak"
 WT="../<repo>-agent-worktree-0001"   # use actual worktreePath from agent-check
 rm -rf ".pi/side-agents/runtime/$ID"
 rm -f "$WT/.pi/active.lock"

@@ -30,13 +30,13 @@
 
 ## Phase 2 — Worktree pool manager
 
-- [x] Implement pool slot discovery using pattern `../<cwd>-agent-worktree-%04d`.
+- [x] Implement pool slot discovery using pattern `../<repoBasename>-agent-worktree-%04d`.
 - [x] Add create/reuse logic via `git worktree`.
 - [x] Implement `.pi/active.lock` write/read/validate with session id diagnostics.
 - [x] Detect orphaned/stale locks and show warnings.
-- [ ] Ensure cleanup/unlock on normal finish.
+- [x] Ensure cleanup/unlock on normal finish (best-effort `.pi/active.lock` removal on exit/crash).
 
-**Exit criteria**: largely met; unlock policy on finish remains to be hardened.
+**Exit criteria**: ✅ met; lockfiles are cleaned up on agent exit/crash (best effort).
 
 ## Phase 3 — Child lifecycle scripts + finish skill
 

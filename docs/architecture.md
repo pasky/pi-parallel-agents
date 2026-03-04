@@ -1,261 +1,319 @@
-# pi-side-agents architecture (v0 draft)
+# pi-side-agents architecture (as implemented)
+
+This document describes the **current** behaviour of `pi-side-agents` as implemented in:
+
+- `extensions/side-agents.ts`
+
+Project-specific lifecycle scripts are created by the `agent-setup` skill under `.pi/` in your repository root. These files are **local/runtime configuration** and should remain **untracked**.
 
 ## 1) Problem statement
 
-`pi-side-agents` should let users keep momentum in a primary Pi session while side tasks execute in parallel child Pi sessions, each isolated in its own git worktree + tmux window.
+Run multiple Pi coding tasks in parallel without blocking the main session:
 
-Primary outcomes:
+- Keep momentum in a primary Pi session.
+- Spawn short-lived child Pi sessions in parallel.
+- Isolate changes via **git worktrees + topic branches**.
+- Provide observability (statusline + `/agents` + tools).
 
-- No context-switch blocking in the main session.
-- Safe parallel code changes via isolated branches/worktrees.
-- Quick observability (statusline + check commands).
-- Deterministic child lifecycle (start/setup → work → finish/rebase/PR).
+## 2) Public surfaces (stable contract)
 
-## 2) Scope
+### Commands
 
-### In scope (MVP)
+- `/agent [-model <provider/id-or-pattern>] <task>` — spawn a child agent.
+- `/agents` — list tracked agents, show orphan worktree locks, offer interactive cleanup.
 
-- `/agent [-model ...] <task>` command from parent session.
-- One child Pi process per task, launched in new tmux window.
-- Worktree pool allocation/reuse with lock files.
-- Parent-visible child status + tmux window id.
-- Child lifecycle scripts (`.pi/side-agent-start.sh`, finish skill/script path).
-- Programmatic control tools: `agent-start`, `agent-check`, `agent-wait-any`, `agent-send`.
+### Tools (for orchestration)
 
-### Out of scope (initially)
+- `agent-start`
+- `agent-check`
+- `agent-wait-any`
+- `agent-send`
 
-- Cross-machine/distributed scheduling.
-- Complex priority queues/fairness policies.
-- Full web dashboard (statusline + CLI checks first).
+These are the contract used by the Pi side-agent harness (and by other parent agents).
 
-## 3) High-level architecture
+## 3) State root + on-disk layout
 
-```text
-Parent Pi session
-  ├─ /agent command handler
-  │   ├─ AgentRegistry (state store)
-  │   ├─ WorktreePoolManager
-  │   ├─ TmuxOrchestrator
-  │   └─ Prompt/HandoffBuilder
-  ├─ Statusline integration
-  └─ Agent control tools API
+**State root** is normally the git repo root (`git rev-parse --show-toplevel`).
 
-Child Pi session (one per agent)
-  ├─ Bootstrapped by side-agent-start.sh
-  ├─ Works inside allocated worktree + branch
-  ├─ Reports status/log tail
-  └─ Finishes via finish skill (merge/PR workflow)
-```
+It can be overridden via environment variable:
 
-## 4) Key components
+- `PI_SIDE_AGENTS_ROOT` — used mostly so child sessions always write to the *parent* repo’s registry/runtime directories.
 
-### 4.1 `/agent` command handler
+Paths (relative to state root):
 
-Responsibilities:
+- Registry: `.pi/side-agents/registry.json`
+- Registry lock: `.pi/side-agents/registry.lock`
+- Runtime per agent: `.pi/side-agents/runtime/<agentId>/`
+  - `kickoff.md` — kickoff prompt text
+  - `backlog.log` — tmux pane output (via `tmux pipe-pane`)
+  - `exit.json` — exit marker written by launcher (`{ exitCode, finishedAt }`)
+  - `launch.sh` — generated launcher script (what tmux runs)
+- Runtime archive (when reusing an agent id): `.pi/side-agents/runtime-archive/<agentId>/<stamp>/...`
 
-1. Parse flags (`-model`, future options).
-2. Reserve worktree slot from pool.
-3. Build kickoff prompt (task + optional context summary).
-4. Spawn tmux window running child Pi command.
-5. Register child metadata in parent registry.
-6. Return immediately to parent user.
+Worktree pool (sibling directories of repo root):
 
-### 4.2 Agent registry
+- `../<repoBasename>-agent-worktree-0001`
+- `../<repoBasename>-agent-worktree-0002`
+- ... (dynamic; no fixed cap)
 
-Persistent file-backed registry so all Pi sessions can render current child state.
+Per-worktree lock (inside each worktree):
 
-Suggested location:
+- `<worktree>/.pi/active.lock`
 
-- Parent checkout: `.pi/side-agents/registry.json`
-- Optional per-agent detail: `.pi/side-agents/agents/<agentId>.json`
-
-Minimal fields per agent:
-
-- `id`
-- `parentSessionId`
-- `childSessionId` (once known)
-- `tmuxSession`
-- `tmuxWindowId`
-- `worktreePath`
-- `branch`
-- `model`
-- `task`
-- `status`
-- `startedAt`, `updatedAt`, `finishedAt`
-- `lastBacklogLines` (or pointer to backlog source)
-- `exitCode` / `error`
-
-### 4.3 Worktree pool manager
-
-Pool naming requirement from your spec:
-
-- `../$(basename "$cwd")-agent-worktree-%04d`
-
-Each worktree contains `.pi/active.lock` with diagnostic info (at least session id).
-
-Lock file JSON proposal:
-
-```json
-{
-  "agentId": "a-0007",
-  "sessionId": "...",
-  "parentSessionId": "...",
-  "pid": 12345,
-  "tmuxWindowId": "@19",
-  "branch": "side-agent/a-0007",
-  "startedAt": "2026-02-27T04:58:00Z"
-}
-```
-
-Rules:
-
-- Reuse unlocked pool slots.
-- If locked but not tracked in parent registry, warn as stale/orphaned lock.
-- If slot missing, create via `git worktree add ...`.
-- Ensure worktree branch policy is deterministic (`side-agent/<id>`).
-- Treat branch naming as internal implementation detail (not UX-facing).
-
-### 4.4 Tmux orchestrator
-
-Responsibilities:
-
-- Create/find target tmux session.
-- Open new window per agent.
-- Run child Pi launch command in that window.
-- Capture tmux identifiers (`window_id`, `window_index`) for status display.
-- On child exit, keep window open with a one-key acknowledgement prompt (`read`), then close.
-
-### 4.5 Child lifecycle scripts
-
-#### Start script
-
-- Path: `.pi/side-agent-start.sh`
-- Responsibilities:
-  - Validate worktree + branch.
-  - Sync branch baseline from main checkout HEAD (according to policy).
-  - Resync `.pi` assets.
-  - Run optional dependency bootstrap hook (project-configured; skipped if unset).
-  - Emit structured diagnostics for failures.
-
-#### Finish flow
-
-- Skill path (planned): `.pi/side-agent-skills/finish/SKILL.md`
-- Typical trigger: explicit child-local user approval (e.g., “LGTM”).
-- Finish skill instruction should discuss/confirm finish action with user before executing.
-- Default finish algorithm (`.pi/side-agent-finish.sh`):
-  1. In child worktree on `side-agent/<id>`, run `git rebase main`.
-  2. If rebase conflicts, keep user in child branch for resolution (`git rebase --continue`) and retry.
-  3. If successful, enter short critical section in parent checkout and fast-forward `main` to `side-agent/<id>` (`git merge --ff-only`).
-  4. If parent-side fast-forward fails (because main moved), return to child worktree, re-run step 1, retry.
-  5. On success, release worktree lock and let the launcher exit with code 0 (successful agents are auto-pruned from registry).
-- Optional alternative flow: create/push PR when explicitly requested.
-
-### 4.6 Parent statusline integration
-
-Display compact view in every Pi session in same project:
-
-- Agent id
-- status (`thinking`, `tool`, `pending`, `running`, `waiting_user`, `failed`, `crashed`)
-- tmux window reference (index/id)
-
-Requires lightweight polling or event update from registry.
-
-### 4.7 Agent control tools (for swarm orchestration)
-
-1. `agent-start(model?, description)` → `{ id, tmuxWindowId, ... }`
-   - `description` is sent verbatim to the child (tool path does not add context summary).
-   - Lifecycle contract: child implements requested changes, then **yields for review** (no immediate `/quit`).
-2. `agent-check(id)` → status + compact backlog tail (sanitized/truncated for safe context usage)
-3. `agent-wait-any(ids[], states?)` → blocks until one agent reaches any target state
-   - default states: `waiting_user | failed | crashed`
-   - optional `states` overrides defaults
-4. `agent-send(id, prompt)`
-   - `!` prefix: interrupt current thinking/tool call before dispatch
-   - `/` prefix: pass command (e.g. `/quit`)
-
-### 4.8 Merge critical-section lock (parent checkout)
-
-Because multiple agents may try to finalize concurrently, parent-checkout merge should be serialized with a short-lived lock.
-
-Suggested lock file:
+Merge critical-section lock (only if your **finish script** uses it):
 
 - `.pi/side-agents/merge.lock`
 
-Suggested lock contents (diagnostic JSON):
+## 4) Agent identity model
+
+### 4.1 Agent IDs
+
+Agent IDs are **kebab-case slugs** (e.g. `fix-auth-leak`, `add-auth-tests-2`).
+
+- `/agent` generates a slug from the task (LLM-assisted when possible, with heuristic fallback).
+- `agent-start` requires an explicit `branchHint` slug.
+- IDs are deduplicated (`-2`, `-3`, …) against:
+  - current registry entries
+  - any existing `side-agent/<id>` branches in `git worktree list --porcelain`
+
+### 4.2 Branch names
+
+Each agent uses a deterministic branch name:
+
+- `side-agent/<agentId>`
+
+## 5) Worktree pool manager
+
+### 5.1 Slot selection
+
+When starting an agent, the extension scans `..` (parent directory of repo root) for directories matching:
+
+- `<repoBasename>-agent-worktree-####` (4-digit index)
+
+It chooses the **first** usable unlocked slot:
+
+- Skips slots with `.pi/active.lock`.
+- Skips unlocked slots with local changes (`git status --porcelain` non-empty).
+- Skips non-worktree directories that are non-empty.
+
+If none are available, it creates the next slot with `git worktree add`.
+
+### 5.2 Baseline commit
+
+Agents are based on the **parent checkout’s current `HEAD`**, not necessarily the `main` branch:
+
+- The parent’s `HEAD` commit hash is read once at spawn time.
+- The agent worktree is hard-reset/cleaned to that commit.
+
+This is intentional: it lets you spawn agents from whatever state you are currently on.
+
+### 5.3 Reset/checkout policy for reused slots
+
+For an already-registered worktree slot, the extension performs (best-effort):
+
+- `git merge --abort` (ignore errors)
+- `git reset --hard <parentHead>`
+- `git clean -fd`
+- `git checkout -B side-agent/<agentId> <parentHead>`
+
+It then tries to delete the previous branch name (only if fully merged) to avoid accumulating old side-agent branches.
+
+### 5.4 Worktree lock file (`.pi/active.lock`)
+
+A JSON lock file is written into the chosen worktree:
+
+- `<worktree>/.pi/active.lock`
+
+Example (fields may evolve):
 
 ```json
 {
-  "agentId": "a-0007",
-  "sessionId": "...",
+  "agentId": "fix-auth-leak",
+  "sessionId": "/path/to/parent/session.jsonl",
+  "parentSessionId": "/path/to/parent/session.jsonl",
   "pid": 12345,
-  "acquiredAt": "2026-02-27T05:40:00Z"
+  "branch": "side-agent/fix-auth-leak",
+  "startedAt": "2026-03-03T02:58:00.000Z",
+  "tmuxWindowId": "@19",
+  "tmuxWindowIndex": 3
 }
 ```
 
-Behavior:
+Notes:
 
-- Lock is held only for parent-side `side-agent/<id> -> main` fast-forward attempt.
-- If busy, finishing agents wait/retry with progress status.
-- On stale lock detection, warn with manual recovery instructions (consistent with warn-only lock policy).
+- `sessionId` is initially written as the parent session id, then updated by the **child** session to its own session id once linked.
+- Orphan/stale lockfiles are never auto-deleted; `/agents` can offer a **user-confirmed** reclaim.
 
-## 5) State model
+### 5.5 Replicating `.pi/side-agent-*` into worktrees
 
-Suggested normalized states:
+On allocation, the extension symlinks any entries in the parent repo’s `.pi/` whose names start with `side-agent-` into the child worktree’s `.pi/`.
 
-- `allocating_worktree`
-- `spawning_tmux`
+This is how child worktrees discover:
+
+- `.pi/side-agent-start.sh`
+- `.pi/side-agent-finish.sh`
+- `.pi/side-agent-skills/` (child-only skill directory)
+- optional `.pi/side-agent-bootstrap.sh`
+
+## 6) Tmux orchestrator + launcher
+
+### 6.1 Preconditions
+
+- `tmux` must be installed.
+- `/agent` must be executed from within a tmux session.
+
+### 6.2 Window lifecycle
+
+- A new window is created in the **current tmux session**, named `agent-<agentId>`.
+- The tmux pane is piped into `backlog.log`.
+- The window runs the generated `launch.sh`.
+- On Pi exit, the launcher writes `exit.json`, prompts:
+  - `Press any key to close this tmux window…`
+  and then kills the tmux window.
+
+### 6.3 Child environment variables
+
+The launcher exports (at minimum):
+
+- `PI_SIDE_AGENT_ID`
+- `PI_SIDE_PARENT_SESSION`
+- `PI_SIDE_PARENT_REPO`
+- `PI_SIDE_AGENTS_ROOT`
+- `PI_SIDE_RUNTIME_DIR`
+
+The child session uses these to link itself into the parent registry and to update the worktree lock.
+
+## 7) Registry + status model
+
+### 7.1 Registry file
+
+Registry is a single JSON file:
+
+- `.pi/side-agents/registry.json`
+
+Writes are protected by:
+
+- `.pi/side-agents/registry.lock`
+
+Lock behaviour:
+
+- Wait timeout: ~10s
+- Stale lock reap: lock file older than ~30s is considered stale and removed
+
+### 7.2 Runtime refresh rules
+
+When the parent (or tools) refresh an agent record:
+
+- If `exit.json` exists:
+  - sets `exitCode` + `finishedAt`
+  - marks status `done` for exit code `0`, else `failed`
+  - removes `.pi/active.lock`
+  - **auto-prunes** successful (`exitCode=0`) agents from registry
+- If the tmux window is gone but no exit marker was recorded:
+  - marks `crashed`
+  - sets `error: "tmux window disappeared before an exit marker was recorded"` if missing
+  - removes `.pi/active.lock`
+
+### 7.3 Statuses
+
+Statuses currently used by the core extension:
+
+- `allocating_worktree` — parent is reserving record / picking a slot
+- `spawning_tmux` — runtime dir + tmux window + launcher are being set up
+- `running` — child is actively producing output
+- `waiting_user` — child is idle and waiting for input (set from Pi lifecycle events in the child)
+- `failed` — agent exited non-zero (exit marker recorded)
+- `crashed` — tmux window disappeared without an exit marker
+- `done` — internal terminal success state; record is usually immediately pruned
+
+Statuses reserved for future / project-specific integration:
+
 - `starting`
-- `running`
-- `waiting_user`
 - `finishing`
 - `waiting_merge_lock`
 - `retrying_reconcile`
-- `failed`
-- `crashed`
 
-UI can map these to compact labels/icons.
+## 8) Statusline integration
 
-## 6) Baseline `/agent` flow (sequence)
+In UI sessions, the extension polls every ~2.5s and sets a statusline segment under key `side-agents`.
 
-1. Parent user runs `/agent <task>`.
-2. Parent allocates worktree slot + writes lock.
-3. Parent creates agent id + internal branch (`side-agent/<id>`).
-4. Parent spawns tmux window and launches child with kickoff prompt.
-5. Parent updates registry to `running` and returns control immediately.
-6. Child performs work; status + backlog tail are queryable.
-7. When implementation is ready, child yields for review (`waiting_user`) instead of quitting immediately.
-8. Parent/user inspects results and can send follow-ups (`agent-send`) for revisions.
-9. On explicit "wrap up" instruction, child runs finish flow (reconcile + serialized parent merge or PR policy).
-10. After finish success, child can stay open for post-merge notes.
-11. Parent/user finally quits child (`/quit`), launcher writes exit marker, tmux window closes, and successful records are pruned from registry.
+Format (approx):
 
-## 7) Failure and recovery
+- `<id>:<short>@<tmuxWindowIndex>`
 
-- If child crashes: mark `crashed`, retain logs/backlog pointer.
-- If tmux window disappears unexpectedly: mark `failed` with diagnostics.
-- If lock exists without live child and no registry record: show stale-lock warning + recovery guidance.
-- If parent fast-forward fails because `main` moved: return to child branch rebase step, retry.
-- If finish integration fails for other reasons: keep branch/worktree, emit actionable next steps.
-- If merge lock appears stale: warn and provide manual recovery guidance.
+Example:
 
-## 8) Security / safety constraints
+- `fix-auth-leak:wait@3 add-auth-tests:run@5`
 
-- Never auto-merge without explicit approval policy.
-- Do not enforce parent-checkout read-only mode in MVP (keep behavior policy-driven).
-- Persist enough metadata for postmortem troubleshooting.
+## 9) Child lifecycle scripts (project-local)
 
-## 9) Agreed defaults (2026-02-27)
+The extension does **not** hardcode your bootstrap/merge policy.
 
-- Finish policy default: **local rebase + fast-forward**.
-- Finish skill must **discuss/confirm** the action with user before running it.
-- Parent checkout read-only mode: **not enforced**.
-- `/agent` handoff/context summary: **enabled by default**.
-- tmux window lifecycle: on child exit show **press-any-key/read** prompt, then close.
-- Worktree pool sizing: **dynamic, no cap**.
-- Stale lock handling: **warn only** (no auto-reclaim).
-- Finish approval source: **child-local `LGTM` accepted**.
+Instead, `/skill:agent-setup` scaffolds these project-local (untracked) files:
 
-## 10) Remaining open decisions
+- `.pi/side-agent-start.sh` — optional bootstrap/validation hook (run by launcher if executable)
+  - Important: do **not** reset the worktree’s HEAD here; the extension already checked out the correct commit/branch.
+- `.pi/side-agent-finish.sh` — your finish policy (default template: rebase + fast-forward)
+- `.pi/side-agent-skills/finish/SKILL.md` — a child-only skill that invokes the finish script after explicit user confirmation
 
-1. **Bootstrap strictness**: keep startup bootstrap as optional hook (`.pi/side-agent-bootstrap.sh`) or enforce policy checks (e.g., branch/head sync hard-fail) by default?
-2. **Status fidelity**: whether/how to expose richer live child states (`thinking` / `tool` / `pending`) instead of coarse runtime states only.
+If your finish script uses a parent-side merge critical section, it typically implements it via `.pi/side-agents/merge.lock`.
+
+## 10) Tool contract (current)
+
+### 10.1 `agent-start`
+
+Input:
+
+```json
+{ "description": "...", "branchHint": "fix-auth-leak", "model": "optional" }
+```
+
+Output (success):
+
+```json
+{ "ok": true, "id": "fix-auth-leak", "tmuxWindowId": "@19", "tmuxWindowIndex": 3, "worktreePath": "...", "branch": "side-agent/fix-auth-leak", "warnings": [] }
+```
+
+Notes:
+
+- The `description` is sent verbatim.
+- No parent context summary is added for tool-started agents.
+
+### 10.2 `agent-check`
+
+Input:
+
+```json
+{ "id": "fix-auth-leak" }
+```
+
+Output:
+
+- `{ ok: true, agent: { ... }, backlog: string[] }` or `{ ok: false, error }`
+
+### 10.3 `agent-wait-any`
+
+Input:
+
+```json
+{ "ids": ["fix-auth-leak", "add-auth-tests"], "states": ["waiting_user", "failed"] }
+```
+
+Notes:
+
+- Default wait states are `waiting_user | failed | crashed`.
+- Fails fast on unknown ids on the first poll.
+- If all requested ids disappear from registry (often meaning they all exited successfully), returns `{ ok:false, error }`.
+
+### 10.4 `agent-send`
+
+Input:
+
+```json
+{ "id": "fix-auth-leak", "prompt": "!/quit" }
+```
+
+Prefix rules:
+
+- `!` — send Ctrl+C first; if there is more text after `!`, wait ~300ms, then send it.
+- `/` — forwarded as-is; Pi interprets it as a slash command.
